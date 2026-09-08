@@ -27,9 +27,14 @@ const frontendDistPath = frontendDistCandidates.find((candidate) =>
   fs.existsSync(path.join(candidate, 'index.html')),
 );
 
+const railwayPublicOrigin = process.env.RAILWAY_PUBLIC_DOMAIN
+  ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+  : undefined;
+
 const allowedOrigins = new Set(
   [
     process.env.FRONTEND_ORIGIN,
+    railwayPublicOrigin,
     'http://localhost:3000',
     'http://localhost:3001',
     'http://localhost:5173',
