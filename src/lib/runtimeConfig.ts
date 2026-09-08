@@ -16,5 +16,7 @@ declare global {
 
 export const runtimeConfig = window.__FDR_CONFIG__ || {};
 
-export const getRuntimeEnv = (key: keyof RuntimeConfig) =>
-  runtimeConfig[key] || import.meta.env[key];
+export const getRuntimeEnv = (key: keyof RuntimeConfig) => {
+  if (key === 'VITE_API_BASE_URL' && import.meta.env.PROD) return '';
+  return runtimeConfig[key] || import.meta.env[key];
+};
