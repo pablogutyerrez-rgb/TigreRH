@@ -297,15 +297,37 @@ export default function App() {
 
   // Reactive calculation of participant final state
   useEffect(() => {
+    const sessionsById = new Map(sessions.map(session => [session.id, session]));
+    const attendanceByParticipantSession = new Map<string, Map<number, AttendanceRecord>>();
+    for (const record of attendance) {
+      const key = `${record.participant_id}\u0000${record.training_session_id}`;
+      let recordsByDay = attendanceByParticipantSession.get(key);
+      if (!recordsByDay) {
+        recordsByDay = new Map<number, AttendanceRecord>();
+        attendanceByParticipantSession.set(key, recordsByDay);
+      }
+      if (!recordsByDay.has(record.dia)) recordsByDay.set(record.dia, record);
+    }
+    const confirmationByParticipant = new Map<string, OperationConfirmation>();
+    for (const confirmation of confirmations) {
+      if (
+        !confirmation.isDeleted &&
+        confirmation.estado_alta !== 'Eliminada' &&
+        !confirmationByParticipant.has(confirmation.participant_id)
+      ) {
+        confirmationByParticipant.set(confirmation.participant_id, confirmation);
+      }
+    }
+
     setParticipants(prevParts => {
       let changed = false;
       const updated = prevParts.map(p => {
-        const session = sessions.find((item) => item.id === p.training_session_id);
-        const pAttendance = attendance.filter(a => a.participant_id === p.id && a.training_session_id === p.training_session_id);
-        const activeConfirmation = confirmations.find(c => c.participant_id === p.id && !c.isDeleted && c.estado_alta !== 'Eliminada');
+        const session = sessionsById.get(p.training_session_id);
+        const recordsByDay = attendanceByParticipantSession.get(`${p.id}\u0000${p.training_session_id}`);
+        const activeConfirmation = confirmationByParticipant.get(p.id);
         
         const days = getTrainingDays(session).map(d => {
-          const rec = pAttendance.find(a => a.dia === d);
+          const rec = recordsByDay?.get(d);
           return rec ? rec.estado_asistencia : 'Pendiente';
         });
 
