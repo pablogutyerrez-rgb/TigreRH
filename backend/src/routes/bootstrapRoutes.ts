@@ -11,7 +11,7 @@ const collectionCache = new Map<string, {
   data?: Array<Record<string, unknown>>;
   pending?: Promise<Array<Record<string, unknown>>>;
 }>();
-const COLLECTION_CACHE_TTL_MS = 2 * 60 * 1000;
+const COLLECTION_CACHE_TTL_MS = 10 * 60 * 1000;
 
 const readCollection = async (name: string, bypassCache = false) => {
   const now = Date.now();
@@ -80,11 +80,11 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
       allResponses,
     ] = await Promise.all([
       readCollection('users'),
-      readCollection('sessions', true),
+      readCollection('sessions'),
       readCollection('participants'),
       readCollection('attendance'),
       readCollection('confirmations'),
-      readCollection('reopens', true),
+      readCollection('reopens'),
       readCollection('logs'),
       readCollection('surveys'),
       readCollection('responses'),
