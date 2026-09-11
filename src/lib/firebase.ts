@@ -1,7 +1,5 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
 import { getRuntimeEnv } from './runtimeConfig';
 
 export const firebaseConfig = {
@@ -39,10 +37,5 @@ export const firebaseApp: FirebaseApp | null = isFirebaseConfigured
   : null;
 
 export const firebaseAuth = firebaseApp ? getAuth(firebaseApp) : null;
-export const firestore = firebaseApp ? getFirestore(firebaseApp) : null;
-export const firebaseStorage = firebaseApp ? getStorage(firebaseApp) : null;
-
 export const app = firebaseApp;
 export const auth = firebaseAuth;
-export const db = firestore;
-export const storage = firebaseStorage;

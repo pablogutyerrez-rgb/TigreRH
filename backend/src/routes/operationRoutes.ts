@@ -1,9 +1,8 @@
 import { raw, Router, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
-import { FieldValue } from 'firebase-admin/firestore';
 import { z } from 'zod';
-import { adminRealtimeDb, adminStorage } from '../firebaseAdmin.js';
-import { dataDb as adminDb } from '../hybridDb.js';
+import { adminStorage } from '../firebaseAdmin.js';
+import { dataDb as adminDb, DELETE_FIELD } from '../hybridDb.js';
 import {
   deleteCvFromGoogleDrive,
   downloadCvFromGoogleDrive,
@@ -199,11 +198,11 @@ router.put(
 
     const correctedAttendance: Record<string, unknown> = {
       ...parsed.data,
-      motivo_desercion: FieldValue.delete(),
+      motivo_desercion: DELETE_FIELD,
     };
-    if (parsed.data.observacion === undefined) correctedAttendance.observacion = FieldValue.delete();
-    if (parsed.data.evidencia_nombre === undefined) correctedAttendance.evidencia_nombre = FieldValue.delete();
-    if (parsed.data.evidencia_imagen === undefined) correctedAttendance.evidencia_imagen = FieldValue.delete();
+    if (parsed.data.observacion === undefined) correctedAttendance.observacion = DELETE_FIELD;
+    if (parsed.data.evidencia_nombre === undefined) correctedAttendance.evidencia_nombre = DELETE_FIELD;
+    if (parsed.data.evidencia_imagen === undefined) correctedAttendance.evidencia_imagen = DELETE_FIELD;
 
     const participantRef = adminDb.collection('participants').doc(participantId);
     const participantSnapshot = !hasRemainingDropout ? await participantRef.get() : null;
@@ -216,24 +215,24 @@ router.put(
     propagatedDropouts.forEach((document) => {
       writer.set(document.ref, {
         estado_asistencia: 'Seleccionar',
-        minutos_tardanza: FieldValue.delete(),
-        motivo_desercion: FieldValue.delete(),
-        observacion: FieldValue.delete(),
-        evidencia_nombre: FieldValue.delete(),
-        evidencia_imagen: FieldValue.delete(),
+        minutos_tardanza: DELETE_FIELD,
+        motivo_desercion: DELETE_FIELD,
+        observacion: DELETE_FIELD,
+        evidencia_nombre: DELETE_FIELD,
+        evidencia_imagen: DELETE_FIELD,
         registrado_por: req.user!.uid,
         fecha_registro: new Date().toISOString(),
       }, { merge: true });
     });
     staleDropoutMetadata.forEach((document) => {
       writer.set(document.ref, {
-        motivo_desercion: FieldValue.delete(),
+        motivo_desercion: DELETE_FIELD,
       }, { merge: true });
     });
     if (shouldReactivateParticipant) {
       writer.set(participantRef, {
         estado_final: 'En formación',
-        motivo_desercion: FieldValue.delete(),
+        motivo_desercion: DELETE_FIELD,
       }, { merge: true });
     }
     await writer.close();
@@ -426,23 +425,11 @@ router.post(
     try {
       await adminDb.collection('cv_records').doc(recordId).set(cvRecord);
       await access.participantDoc.ref.set(nextParticipant, { merge: true });
-      if (process.env.FIREBASE_DATABASE_URL) {
-        void adminRealtimeDb.ref().update({
-          [`shared/cv_records_v1/${recordId}`]: cvRecord,
-          [`shared/cv_record_${recordId}`]: cvRecord,
-        }).catch((metadataError) => console.warn('Realtime Database CV metadata was not mirrored:', metadataError));
-      }
     } catch (persistenceError) {
       const rollbackTasks: Promise<unknown>[] = [
         deleteCvFromGoogleDrive(driveFile.id),
         adminDb.collection('cv_records').doc(recordId).delete(),
       ];
-      if (process.env.FIREBASE_DATABASE_URL) {
-        rollbackTasks.push(adminRealtimeDb.ref().update({
-          [`shared/cv_records_v1/${recordId}`]: null,
-          [`shared/cv_record_${recordId}`]: null,
-        }));
-      }
       await Promise.allSettled(rollbackTasks);
       throw persistenceError;
     }

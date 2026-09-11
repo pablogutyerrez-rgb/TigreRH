@@ -1527,7 +1527,7 @@ export default function App() {
     addAuditLog(
       'Solicitud de reapertura',
       'Control de asistencia',
-      `El formador ${activeUser.nombre} solicitó reapertura para el Día ${req.dia_capacitación} de la generación "${req.generacion}".`,
+      `El formador ${activeUser.nombre} solicitó reapertura para el Día ${req.dia_capacitacion} de la generación "${req.generacion}".`,
       req.campaña,
       req.generacion
     );
@@ -1562,7 +1562,7 @@ export default function App() {
     addAuditLog(
       'Aprobación de reapertura',
       'Reaperturas de asistencia',
-      `El administrador ${adminName} aprobó la reapertura del Día ${req.dia_capacitación} para ${req.formador_nombre}.`,
+      `El administrador ${adminName} aprobó la reapertura del Día ${req.dia_capacitacion} para ${req.formador_nombre}.`,
       req.campaña,
       req.generacion
     );
@@ -1593,7 +1593,7 @@ export default function App() {
     addAuditLog(
       'Rechazo de reapertura',
       'Reaperturas de asistencia',
-      `El administrador ${adminName} rechazó la reapertura del Día ${req.dia_capacitación} para ${req.formador_nombre}. Motivo: ${reason}`,
+      `El administrador ${adminName} rechazó la reapertura del Día ${req.dia_capacitacion} para ${req.formador_nombre}. Motivo: ${reason}`,
       req.campaña,
       req.generacion
     );

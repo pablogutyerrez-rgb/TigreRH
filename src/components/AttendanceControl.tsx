@@ -568,10 +568,10 @@ export default function AttendanceControl({
 
   const attendanceWindowLabel = useMemo(() => {
     if (currentUser.rol === 'Formador') return '09:00 a 09:30';
-    const [hour, minute] = (session.hora_capacitación || '09:00').split(':').map(Number);
+    const [hour, minute] = (session.hora_capacitacion || '09:00').split(':').map(Number);
     const end = hour * 60 + minute + 30;
-    return `${session.hora_capacitación || '09:00'} a ${String(Math.floor(end / 60) % 24).padStart(2, '0')}:${String(end % 60).padStart(2, '0')}`;
-  }, [currentUser.rol, session.hora_capacitación]);
+    return `${session.hora_capacitacion || '09:00'} a ${String(Math.floor(end / 60) % 24).padStart(2, '0')}:${String(end % 60).padStart(2, '0')}`;
+  }, [currentUser.rol, session.hora_capacitacion]);
 
   // Check if modification is locked based on Role, Simulated Time and Reopens
   const isTimeLocked = useMemo(() => {
@@ -601,7 +601,7 @@ export default function AttendanceControl({
       // Check for approved reopen
       const hasApprovedReopen = reopens.some(r =>
         r.training_session_id === session.id &&
-        r.dia_capacitación === selectedDay &&
+        r.dia_capacitacion === selectedDay &&
         r.estado === 'aprobada'
       );
 
@@ -734,8 +734,8 @@ export default function AttendanceControl({
         training_session_id: session.id,
         campaña: session.campaña,
         generacion: session.nombre_generacion,
-        fecha_capacitación: getDayDate(selectedDay),
-        dia_capacitación: selectedDay,
+        fecha_capacitacion: getDayDate(selectedDay),
+        dia_capacitacion: selectedDay,
         motivo: reopenMotivo,
         comentario: reopenComentario
       });
@@ -809,7 +809,7 @@ export default function AttendanceControl({
     return reopens
       .filter(r =>
         r.training_session_id === session.id &&
-        r.dia_capacitación === selectedDay
+        r.dia_capacitacion === selectedDay
       )
       .sort((a, b) => new Date(b.fecha_solicitud).getTime() - new Date(a.fecha_solicitud).getTime())[0];
   }, [reopens, session.id, selectedDay]);
@@ -817,7 +817,7 @@ export default function AttendanceControl({
   const handleExportAttendanceExcel = () => {
     const rows = filteredParts.map((part) => {
       const rowAttendance = trainingDays.map((day) => attendanceMap[`${part.id}_${day}`]);
-      return {
+      const row: Record<string, string | number> = {
         DNI: part.dni,
         Nombres: part.nombres,
         Apellidos: part.apellidos,

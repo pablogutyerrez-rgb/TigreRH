@@ -103,7 +103,9 @@ export default function Reportes({
   };
 
   const getObservation = (participant: Participant) => {
-    const latestAttendanceObservation = Object.values(attendanceByParticipantDay[participant.id] || {})
+    const participantAttendance: Record<number, AttendanceRecord> =
+      attendanceByParticipantDay[participant.id] || {};
+    const latestAttendanceObservation = Object.values(participantAttendance)
       .sort((a, b) => b.dia - a.dia)
       .find(record => record.observacion?.trim())?.observacion;
 

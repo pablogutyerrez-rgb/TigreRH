@@ -16,6 +16,9 @@
     "migrate:users:postgres": "tsx src/scripts/migrateUsersToPostgres.ts",
     "migrate:sessions:postgres": "tsx src/scripts/migrateSessionsToPostgres.ts",
     "migrate:participants:postgres": "tsx src/scripts/migrateParticipantsToPostgres.ts",
+    "migrate:firestore:postgres": "tsx src/scripts/migrateAllFirestoreToPostgres.ts",
+    "validate:postgres:migration": "tsx src/scripts/validatePostgresMigration.ts",
+    "test:postgres:persistence": "tsx src/scripts/testPostgresPersistence.ts",
     "activate:postgres-cutover": "tsx src/scripts/activatePostgresCutover.ts"
   },
   "dependencies": {

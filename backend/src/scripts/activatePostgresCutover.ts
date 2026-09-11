@@ -18,12 +18,17 @@ const activate = async () => {
     for (const [collectionName, tableName, idColumn] of TABLES) {
       await client.query(
         `INSERT INTO tigre_rh.current_documents (
-           collection_name, document_id, payload, is_deleted, created_at, updated_at
+           collection_name, document_id, document_path, payload, source_payload,
+           is_deleted, created_at, updated_at
          )
-         SELECT $1, ${idColumn}, source_payload || jsonb_build_object('id', ${idColumn}), FALSE, NOW(), NOW()
+         SELECT $1, ${idColumn}, $1 || '/' || ${idColumn},
+           source_payload || jsonb_build_object('id', ${idColumn}),
+           source_payload || jsonb_build_object('id', ${idColumn}),
+           FALSE, NOW(), NOW()
          FROM tigre_rh.${tableName}
          ON CONFLICT (collection_name, document_id) DO UPDATE SET
-           payload = EXCLUDED.payload,
+           document_path = COALESCE(tigre_rh.current_documents.document_path, EXCLUDED.document_path),
+           source_payload = COALESCE(tigre_rh.current_documents.source_payload, EXCLUDED.source_payload),
            is_deleted = FALSE,
            updated_at = NOW()`,
         [collectionName],
@@ -53,9 +58,7 @@ const activate = async () => {
 
     await client.query('COMMIT');
     console.log('Corte PostgreSQL preparado correctamente.');
-    console.log(
-      'Configura POSTGRES_COMPLETE_COLLECTIONS=users,user_credentials,sessions,participants,attendance',
-    );
+    console.log('PostgreSQL queda como fuente unica del runtime; no se requiere una lista de fallback.');
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;

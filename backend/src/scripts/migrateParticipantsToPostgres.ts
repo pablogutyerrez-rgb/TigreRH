@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import type { DocumentData, QueryDocumentSnapshot } from 'firebase-admin/firestore';
-import { adminDb } from '../firebaseAdmin.js';
+import { adminDb } from '../firestoreMigrationAdmin.js';
 import { closePostgresPool, getPostgresPool } from '../postgres.js';
 
 type SourceDocument = {

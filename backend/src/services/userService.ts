@@ -1,5 +1,4 @@
 import bcrypt from 'bcryptjs';
-import type { DocumentData } from 'firebase-admin/firestore';
 import { adminAuth } from '../firebaseAdmin.js';
 import { dataDb as adminDb } from '../hybridDb.js';
 import { normalizeUsername } from '../utils/normalizeUsername.js';
@@ -38,7 +37,7 @@ const getBcryptRounds = () => {
 
 const getAuthErrorCode = (error: unknown) => (error as { code?: string })?.code;
 
-const userForClient = (uid: string, data: DocumentData) => ({
+const userForClient = (uid: string, data: Record<string, any>) => ({
   id: uid,
   nombre: data.nombre,
   correo: data.correo || '',

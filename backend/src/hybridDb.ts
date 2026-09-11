@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { adminDb as historicalDb } from './firebaseAdmin.js';
 import { getPostgresPool } from './postgres.js';
 
 type Data = Record<string, any>;
@@ -7,20 +6,9 @@ type QueryClient = { query: (text: string, values?: unknown[]) => Promise<any> }
 type Filter = { field: string; operator: '=='; value: unknown };
 type Ordering = { field: string; direction: 'asc' | 'desc' };
 
+export const DELETE_FIELD = Symbol('postgres-delete-field');
+
 let schemaReady: Promise<void> | undefined;
-const historicalCache = new Map<string, {
-  expiresAt: number;
-  data: Map<string, Data>;
-}>();
-const HISTORICAL_CACHE_TTL_MS = Number(
-  process.env.FIRESTORE_HISTORICAL_CACHE_TTL_MS || 60 * 60 * 1000,
-);
-const postgresCompleteCollections = new Set(
-  String(process.env.POSTGRES_COMPLETE_COLLECTIONS || '')
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean),
-);
 
 export const ensureHybridSchema = async () => {
   if (!schemaReady) {
@@ -32,6 +20,11 @@ export const ensureHybridSchema = async () => {
           collection_name TEXT NOT NULL,
           document_id TEXT NOT NULL,
           payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+          source_payload JSONB,
+          document_path TEXT,
+          source_create_time TIMESTAMPTZ,
+          source_update_time TIMESTAMPTZ,
+          source_hash TEXT,
           is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -39,8 +32,28 @@ export const ensureHybridSchema = async () => {
         )
       `);
       await pool.query(`
+        ALTER TABLE tigre_rh.current_documents
+          ADD COLUMN IF NOT EXISTS source_payload JSONB,
+          ADD COLUMN IF NOT EXISTS document_path TEXT,
+          ADD COLUMN IF NOT EXISTS source_create_time TIMESTAMPTZ,
+          ADD COLUMN IF NOT EXISTS source_update_time TIMESTAMPTZ,
+          ADD COLUMN IF NOT EXISTS source_hash TEXT
+      `);
+      await pool.query(`
         CREATE INDEX IF NOT EXISTS current_documents_collection_updated_idx
         ON tigre_rh.current_documents (collection_name, updated_at DESC)
+      `);
+      await pool.query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS current_documents_path_idx
+        ON tigre_rh.current_documents (document_path)
+        WHERE document_path IS NOT NULL
+      `);
+      await pool.query(`
+        UPDATE tigre_rh.current_documents
+        SET
+          document_path = COALESCE(document_path, collection_name || '/' || document_id),
+          source_payload = COALESCE(source_payload, payload)
+        WHERE document_path IS NULL OR source_payload IS NULL
       `);
     })().catch((error) => {
       schemaReady = undefined;
@@ -51,6 +64,8 @@ export const ensureHybridSchema = async () => {
 };
 
 const isDeleteSentinel = (value: unknown) => Boolean(
+  value === DELETE_FIELD ||
+  (
   value &&
   typeof value === 'object' &&
   (
@@ -58,7 +73,7 @@ const isDeleteSentinel = (value: unknown) => Boolean(
       .toLowerCase()
       .includes('delete') ||
     value.constructor?.name === 'DeleteTransform'
-  ),
+  )),
 );
 
 const cleanData = (value: Data, current: Data = {}, merge = false) => {
@@ -72,22 +87,6 @@ const cleanData = (value: Data, current: Data = {}, merge = false) => {
     result[key] = entry;
   });
   return result;
-};
-
-const readHistoricalCollection = async (collectionName: string) => {
-  if (postgresCompleteCollections.has(collectionName)) return new Map<string, Data>();
-  const cached = historicalCache.get(collectionName);
-  if (cached && cached.expiresAt > Date.now()) return cached.data;
-
-  const snapshot = await historicalDb.collection(collectionName).get();
-  const data = new Map(
-    snapshot.docs.map((document) => [document.id, document.data() as Data]),
-  );
-  historicalCache.set(collectionName, {
-    data,
-    expiresAt: Date.now() + HISTORICAL_CACHE_TTL_MS,
-  });
-  return data;
 };
 
 const readCurrentRow = async (
@@ -113,11 +112,7 @@ const readDocumentData = async (
   lock = false,
 ) => {
   const current = await readCurrentRow(client, collectionName, documentId, lock);
-  if (current) return current.is_deleted ? undefined : current.payload;
-
-  if (postgresCompleteCollections.has(collectionName)) return undefined;
-  const historical = await historicalDb.collection(collectionName).doc(documentId).get();
-  return historical.exists ? historical.data() as Data : undefined;
+  return current && !current.is_deleted ? current.payload : undefined;
 };
 
 const writeDocumentData = async (
@@ -125,22 +120,47 @@ const writeDocumentData = async (
   documentId: string,
   data: Data,
   merge: boolean,
-  client: QueryClient = getPostgresPool(),
-) => {
+  client?: QueryClient,
+): Promise<Data> => {
   await ensureHybridSchema();
+  if (merge && !client) {
+    const transactionClient = await getPostgresPool().connect();
+    try {
+      await transactionClient.query('BEGIN');
+      const payload: Data = await writeDocumentData(
+        collectionName,
+        documentId,
+        data,
+        true,
+        transactionClient,
+      );
+      await transactionClient.query('COMMIT');
+      return payload;
+    } catch (error) {
+      await transactionClient.query('ROLLBACK');
+      throw error;
+    } finally {
+      transactionClient.release();
+    }
+  }
+  const queryClient = client || getPostgresPool();
   const current = merge
-    ? await readDocumentData(collectionName, documentId, client, true)
+    ? await readDocumentData(collectionName, documentId, queryClient, true)
     : undefined;
   const payload = cleanData(data, current, merge);
-  await client.query(
+  await queryClient.query(
     `INSERT INTO tigre_rh.current_documents (
-       collection_name, document_id, payload, is_deleted, created_at, updated_at
-     ) VALUES ($1, $2, $3::jsonb, FALSE, NOW(), NOW())
+       collection_name, document_id, document_path, payload, source_payload,
+       is_deleted, created_at, updated_at
+     ) VALUES ($1, $2, $3, $4::jsonb, $4::jsonb, FALSE, NOW(), NOW())
      ON CONFLICT (collection_name, document_id) DO UPDATE SET
        payload = EXCLUDED.payload,
+       source_payload = EXCLUDED.source_payload,
+       document_path = EXCLUDED.document_path,
+       source_hash = NULL,
        is_deleted = FALSE,
        updated_at = NOW()`,
-    [collectionName, documentId, JSON.stringify(payload)],
+    [collectionName, documentId, `${collectionName}/${documentId}`, JSON.stringify(payload)],
   );
   return payload;
 };
@@ -153,28 +173,28 @@ const deleteDocumentData = async (
   await ensureHybridSchema();
   await client.query(
     `INSERT INTO tigre_rh.current_documents (
-       collection_name, document_id, payload, is_deleted, created_at, updated_at
-     ) VALUES ($1, $2, '{}'::jsonb, TRUE, NOW(), NOW())
+       collection_name, document_id, document_path, payload, source_payload,
+       source_hash, is_deleted, created_at, updated_at
+     ) VALUES ($1, $2, $3, '{}'::jsonb, '{}'::jsonb, NULL, TRUE, NOW(), NOW())
      ON CONFLICT (collection_name, document_id) DO UPDATE SET
        payload = '{}'::jsonb,
+       source_payload = '{}'::jsonb,
+       source_hash = NULL,
        is_deleted = TRUE,
        updated_at = NOW()`,
-    [collectionName, documentId],
+    [collectionName, documentId, `${collectionName}/${documentId}`],
   );
 };
 
 const listDocumentData = async (collectionName: string) => {
   await ensureHybridSchema();
-  const [historical, current] = await Promise.all([
-    readHistoricalCollection(collectionName),
-    getPostgresPool().query(
-      `SELECT document_id, payload, is_deleted
-       FROM tigre_rh.current_documents
-       WHERE collection_name = $1`,
-      [collectionName],
-    ),
-  ]);
-  const merged = new Map(historical);
+  const current = await getPostgresPool().query(
+    `SELECT document_id, payload, is_deleted
+     FROM tigre_rh.current_documents
+     WHERE collection_name = $1`,
+    [collectionName],
+  );
+  const merged = new Map<string, Data>();
   current.rows.forEach((row: { document_id: string; payload: Data; is_deleted: boolean }) => {
     if (row.is_deleted) merged.delete(row.document_id);
     else merged.set(row.document_id, row.payload);
@@ -217,12 +237,29 @@ class HybridDocumentReference {
   }
 
   async create(data: Data) {
-    if (await readDocumentData(this.collectionName, this.id)) {
+    await ensureHybridSchema();
+    const payload = cleanData(data);
+    const result = await getPostgresPool().query(
+      `INSERT INTO tigre_rh.current_documents (
+         collection_name, document_id, document_path, payload, source_payload,
+         is_deleted, created_at, updated_at
+       ) VALUES ($1, $2, $3, $4::jsonb, $4::jsonb, FALSE, NOW(), NOW())
+       ON CONFLICT (collection_name, document_id) DO UPDATE SET
+         document_path = EXCLUDED.document_path,
+         payload = EXCLUDED.payload,
+         source_payload = EXCLUDED.source_payload,
+         source_hash = NULL,
+         is_deleted = FALSE,
+         updated_at = NOW()
+       WHERE tigre_rh.current_documents.is_deleted = TRUE
+       RETURNING document_id`,
+      [this.collectionName, this.id, `${this.collectionName}/${this.id}`, JSON.stringify(payload)],
+    );
+    if (!result.rowCount) {
       const error = new Error('Document already exists.') as Error & { code?: number };
       error.code = 6;
       throw error;
     }
-    await writeDocumentData(this.collectionName, this.id, data, false);
   }
 
   async delete() {

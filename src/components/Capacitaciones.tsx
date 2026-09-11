@@ -576,9 +576,9 @@ export default function Capacitaciones({
     setEditCampaña(s.campaña);
     setEditFechaInicio(s.fecha_inicio);
     setEditFechaFin(s.fecha_fin);
-    setEditHoraCapacitacion(s.hora_capacitación || '08:00');
+    setEditHoraCapacitacion(s.hora_capacitacion || '08:00');
     setEditTurno(s.turno as any);
-    setEditTipoCapacitacion(s.tipo_capacitación);
+    setEditTipoCapacitacion(s.tipo_capacitacion);
     setEditFormadorInicialIds(getSessionInitialTrainerIds(s));
     setEditFormadorOjtIds(getSessionOjtTrainerIds(s));
     setEditReclutadorId(s.reclutador_id || '');
@@ -622,9 +622,9 @@ export default function Capacitaciones({
         nombre_generacion: nextTrainingIdentifier,
         fecha_inicio: editFechaInicio,
         fecha_fin: editFechaFin,
-        hora_capacitación: editHoraCapacitacion,
+        hora_capacitacion: editHoraCapacitacion,
         turno: editTurno,
-        tipo_capacitación: editTipoCapacitacion,
+        tipo_capacitacion: editTipoCapacitacion,
         formador_id: initialTrainers[0].id,
         formador_nombre: initialTrainers[0].nombre,
         formador_ids: selectedTrainers.map((trainer) => trainer.id),
@@ -767,7 +767,7 @@ export default function Capacitaciones({
         field = 'estado_pruebas_psicologicas';
         label = 'Pruebas psicológicas';
       } else if (hLower === 'capacitación' || hLower === 'capacitación') {
-        field = 'fecha_capacitación';
+        field = 'fecha_capacitacion';
         label = 'Fecha capacitación';
       } else if (hLower === 'formador') {
         field = 'formador_asignado';
@@ -826,7 +826,7 @@ export default function Capacitaciones({
     const colPruebasPsicologicas = columns.find(c => c.field === 'estado_pruebas_psicologicas');
     const colFechaEntrevistaSup = columns.find(c => c.field === 'fecha_entrevista_sup');
     const colResultadoEntrevistaSup = columns.find(c => c.field === 'resultado_entrevista_sup');
-    const colCapacitacion = columns.find(c => c.field === 'fecha_capacitación');
+    const colCapacitacion = columns.find(c => c.field === 'fecha_capacitacion');
     const colFormador = columns.find(c => c.field === 'formador_asignado');
     const colD1 = columns.find(c => c.field === 'asistencia_dia_1');
     const colD2 = columns.find(c => c.field === 'asistencia_dia_2');
@@ -1099,7 +1099,7 @@ export default function Capacitaciones({
         estado_pruebas_psicologicas,
         fecha_entrevista_sup,
         resultado_entrevista_sup,
-        fecha_capacitación,
+        fecha_capacitacion: fecha_capacitación,
         formador_asignado,
 
         // Attendance states
@@ -1254,10 +1254,10 @@ export default function Capacitaciones({
       {
         nombre_generacion: trainingIdentifier,
         campaña,
-        tipo_capacitación: tipoCapacitacion,
+        tipo_capacitacion: tipoCapacitacion,
         fecha_inicio: fechaInicio,
         fecha_fin: fechaFin,
-        hora_capacitación: horaCapacitacion,
+        hora_capacitacion: horaCapacitacion,
         formador_id: initialTrainers[0].id,
         formador_ids: selectedTrainers.map((trainer) => trainer.id),
         formador_nombres: selectedTrainers.map((trainer) => trainer.nombre),
@@ -1470,7 +1470,7 @@ export default function Capacitaciones({
                       <h4 className="text-slate-800 font-bold text-base leading-snug line-clamp-2">
                         {getTrainingIdentifier(session)}
                       </h4>
-                      <p className="text-slate-400 text-xs mt-1">{session.tipo_capacitación}</p>
+                      <p className="text-slate-400 text-xs mt-1">{session.tipo_capacitacion}</p>
                     </div>
 
                     {/* Metadata */}
@@ -1484,7 +1484,7 @@ export default function Capacitaciones({
                       <div className="flex items-center gap-2">
                         <Clock className="w-4 h-4 text-slate-400 shrink-0" />
                         <span>
-                          <strong>Hora:</strong> {session.hora_capacitación || '08:00'}
+                          <strong>Hora:</strong> {session.hora_capacitacion || '08:00'}
                         </span>
                       </div>
                       <div className="flex items-center gap-2">
@@ -2118,7 +2118,7 @@ export default function Capacitaciones({
                                       {p.resultado_entrevista_sup || '-'}
                                     </span>
                                   </td>
-                                  <td className="p-3 text-center font-mono text-slate-600">{p.fecha_capacitación || '-'}</td>
+                                  <td className="p-3 text-center font-mono text-slate-600">{p.fecha_capacitacion || '-'}</td>
                                   <td className="p-3 font-medium text-slate-700">{p.formador_asignado || '-'}</td>
                                   
                                   {/* Operational Days defaults */}

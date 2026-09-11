@@ -1,5 +1,4 @@
-import { FieldValue } from 'firebase-admin/firestore';
-import { dataDb as adminDb } from '../hybridDb.js';
+import { dataDb as adminDb, DELETE_FIELD } from '../hybridDb.js';
 import { calculateTrainingVariableEvaluation } from './trainingVariableCalculator.js';
 
 export type TrainingVariableStatus = 'BORRADOR' | 'CERRADO' | 'REABIERTO' | 'ANULADO';
@@ -267,7 +266,7 @@ export const reopenTrainingVariableEvaluation = async (id: string, actor: Actor)
     fecha_modificacion: nowIso(),
     usuario_modificacion: actor.uid,
   };
-  await adminDb.collection(COLLECTION).doc(id).set({ ...changes, fecha_cierre: FieldValue.delete() }, { merge: true });
+  await adminDb.collection(COLLECTION).doc(id).set({ ...changes, fecha_cierre: DELETE_FIELD }, { merge: true });
   await writeHistory(id, 'REABRIR', actor, 'Evaluación reabierta.');
   return { ...current, ...changes, fecha_cierre: undefined };
 };

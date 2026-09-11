@@ -224,7 +224,7 @@ export default function Encuestas({
         q1, q2, q3, q4, q5, q6, q7, q8,
         total_score,
         final_score_20,
-        classification: classification === 'Critico' ? 'Crítico' : classification,
+        classification,
         promedio_individual: r.promedio_individual !== undefined ? r.promedio_individual : Number((sum_8 / 8).toFixed(2)),
         comentario_positivo: r.comentario_positivo || '',
         aspecto_mejora: r.aspecto_mejora || ''

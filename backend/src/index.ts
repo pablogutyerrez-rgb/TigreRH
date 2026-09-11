@@ -66,7 +66,7 @@ app.get('/health', async (_req, res) => {
       ok: true,
       frontend: Boolean(frontendDistPath),
       primaryDatabase: 'postgresql',
-      firestoreMode: 'historical-read-only',
+      firestoreMode: 'disabled-for-runtime-data',
     });
   } catch (error) {
     console.error('PostgreSQL health check failed:', error);
