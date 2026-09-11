@@ -1,5 +1,5 @@
 import { Router, type Response } from 'express';
-import { adminDb } from '../firebaseAdmin.js';
+import { dataDb as adminDb } from '../hybridDb.js';
 import {
   type AuthenticatedRequest,
   requireAuth,

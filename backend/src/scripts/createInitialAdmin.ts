@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
-import { adminAuth, adminDb } from '../firebaseAdmin.js';
+import { adminAuth } from '../firebaseAdmin.js';
+import { dataDb as adminDb } from '../hybridDb.js';
 import { normalizeUsername } from '../utils/normalizeUsername.js';
 
 const getArg = (name: string) => {

@@ -12,7 +12,11 @@
     "start": "node dist/index.js",
     "test:variables": "tsx src/services/trainingVariableCalculator.test.ts",
     "create:admin": "tsx src/scripts/createInitialAdmin.ts",
-    "repair:user-access": "tsx src/scripts/repairUserAccess.ts"
+    "repair:user-access": "tsx src/scripts/repairUserAccess.ts",
+    "migrate:users:postgres": "tsx src/scripts/migrateUsersToPostgres.ts",
+    "migrate:sessions:postgres": "tsx src/scripts/migrateSessionsToPostgres.ts",
+    "migrate:participants:postgres": "tsx src/scripts/migrateParticipantsToPostgres.ts",
+    "activate:postgres-cutover": "tsx src/scripts/activatePostgresCutover.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -21,6 +25,7 @@
     "express": "^4.21.2",
     "firebase-admin": "13.5.0",
     "googleapis": "^159.0.0",
+    "pg": "^8.23.0",
     "zod": "^4.1.13"
   },
   "devDependencies": {

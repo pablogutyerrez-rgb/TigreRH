@@ -1,4 +1,4 @@
-import { adminDb } from '../firebaseAdmin.js';
+import { dataDb as adminDb } from '../hybridDb.js';
 
 type StoredRecord = Record<string, unknown> & { id: string };
 

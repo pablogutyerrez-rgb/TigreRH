@@ -2,7 +2,8 @@ import { raw, Router, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { FieldValue } from 'firebase-admin/firestore';
 import { z } from 'zod';
-import { adminDb, adminRealtimeDb, adminStorage } from '../firebaseAdmin.js';
+import { adminRealtimeDb, adminStorage } from '../firebaseAdmin.js';
+import { dataDb as adminDb } from '../hybridDb.js';
 import {
   deleteCvFromGoogleDrive,
   downloadCvFromGoogleDrive,

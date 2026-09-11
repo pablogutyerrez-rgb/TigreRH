@@ -1,5 +1,5 @@
 import { FieldValue } from 'firebase-admin/firestore';
-import { adminDb } from '../firebaseAdmin.js';
+import { dataDb as adminDb } from '../hybridDb.js';
 import { calculateTrainingVariableEvaluation } from './trainingVariableCalculator.js';
 
 export type TrainingVariableStatus = 'BORRADOR' | 'CERRADO' | 'REABIERTO' | 'ANULADO';

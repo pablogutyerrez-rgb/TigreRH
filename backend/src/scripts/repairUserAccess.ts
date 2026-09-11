@@ -1,4 +1,5 @@
-import { adminAuth, adminDb } from '../firebaseAdmin.js';
+import { adminAuth } from '../firebaseAdmin.js';
+import { dataDb as adminDb } from '../hybridDb.js';
 import { normalizeUsername } from '../utils/normalizeUsername.js';
 
 const getAuthErrorCode = (error: unknown) => (error as { code?: string })?.code;

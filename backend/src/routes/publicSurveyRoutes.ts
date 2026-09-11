@@ -1,6 +1,6 @@
 import { Router, type Response } from 'express';
 import { z } from 'zod';
-import { adminDb } from '../firebaseAdmin.js';
+import { dataDb as adminDb } from '../hybridDb.js';
 
 const router = Router();
 

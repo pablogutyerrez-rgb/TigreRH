@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
-import { adminAuth, adminDb } from '../firebaseAdmin.js';
+import { adminAuth } from '../firebaseAdmin.js';
+import { dataDb as adminDb } from '../hybridDb.js';
 
 export interface AuthenticatedUser {
   uid: string;

@@ -14,6 +14,7 @@ import { surveyRoutes } from './routes/surveyRoutes.js';
 import { trainingRoutes } from './routes/trainingRoutes.js';
 import { trainingVariableRoutes } from './routes/trainingVariableRoutes.js';
 import { userRoutes } from './routes/userRoutes.js';
+import { getPostgresPool } from './postgres.js';
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
@@ -58,8 +59,23 @@ app.use(
 );
 app.use(express.json({ limit: '15mb' }));
 
-app.get('/health', (_req, res) => {
-  res.json({ ok: true, frontend: Boolean(frontendDistPath) });
+app.get('/health', async (_req, res) => {
+  try {
+    await getPostgresPool().query('SELECT 1');
+    res.json({
+      ok: true,
+      frontend: Boolean(frontendDistPath),
+      primaryDatabase: 'postgresql',
+      firestoreMode: 'historical-read-only',
+    });
+  } catch (error) {
+    console.error('PostgreSQL health check failed:', error);
+    res.status(503).json({
+      ok: false,
+      frontend: Boolean(frontendDistPath),
+      primaryDatabase: 'postgresql',
+    });
+  }
 });
 
 app.get('/config.js', (_req, res) => {

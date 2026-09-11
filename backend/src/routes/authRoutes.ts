@@ -1,6 +1,10 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { AuthError, loginWithUsername } from '../services/authService.js';
+import {
+  type AuthenticatedRequest,
+  requireAuth,
+} from '../utils/authMiddleware.js';
 
 const router = Router();
 
@@ -28,6 +32,10 @@ router.post('/login', async (req, res) => {
     console.error('Login error:', error);
     res.status(500).json({ message: 'Error interno.' });
   }
+});
+
+router.get('/me', requireAuth, (req: AuthenticatedRequest, res) => {
+  res.json({ user: req.user });
 });
 
 export { router as authRoutes };

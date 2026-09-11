@@ -4,9 +4,7 @@ import {
   signOut,
   type User as FirebaseUser,
 } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import { FDR_COLLECTIONS } from '../../constants/firebaseCollections';
-import { auth, db } from '../../lib/firebase';
+import { auth } from '../../lib/firebase';
 import { getRuntimeEnv } from '../../lib/runtimeConfig';
 import type { User } from '../../types';
 
@@ -35,11 +33,6 @@ const getRequiredAuth = () => {
   return auth;
 };
 
-const getRequiredDb = () => {
-  if (!db) throw new Error('Firebase Firestore is not configured. Check .env.local.');
-  return db;
-};
-
 const mapUserProfile = (id: string, data: unknown): UserProfile => {
   const profile = data as UserProfile;
   return {
@@ -50,9 +43,15 @@ const mapUserProfile = (id: string, data: unknown): UserProfile => {
 };
 
 export const getCurrentUserProfile = async (uid: string) => {
-  const snapshot = await getDoc(doc(getRequiredDb(), FDR_COLLECTIONS.users, uid));
-  if (!snapshot.exists()) return null;
-  return mapUserProfile(snapshot.id, snapshot.data());
+  const token = await getRequiredAuth().currentUser?.getIdToken();
+  if (!token) return null;
+  const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) return null;
+  const payload = await response.json() as { user?: UserProfile & { uid?: string; id?: string } };
+  if (!payload.user) return null;
+  return mapUserProfile(payload.user.id || payload.user.uid || uid, payload.user);
 };
 
 export const loginWithUsername = async (username: string, password: string) => {
@@ -73,7 +72,7 @@ export const loginWithUsername = async (username: string, password: string) => {
   }
 
   const credential = await signInWithCustomToken(getRequiredAuth(), payload.customToken);
-  const profile = await getCurrentUserProfile(credential.user.uid);
+  const profile = mapUserProfile(credential.user.uid, payload.user);
 
   if (!profile) {
     await signOut(getRequiredAuth());

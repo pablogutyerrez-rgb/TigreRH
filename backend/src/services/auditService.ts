@@ -1,4 +1,4 @@
-import { adminDb } from '../firebaseAdmin.js';
+import { dataDb as adminDb } from '../hybridDb.js';
 
 interface AuditLogInput {
   modulo: string;
