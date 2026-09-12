@@ -563,7 +563,7 @@ export default function Capacitaciones({
 
       onAuditLog(
         'Cambio de campaña antes de guardar',
-        'Registro de capacitaciónes',
+        'Registro de capacitaciones',
         `Se cambió la campaña de "${oldCamp}" a "${newCamp}" en el formulario de creación. El código se recalculó automáticamente a "${recalculatedCode}".`,
         newCamp,
         recalculatedCode
@@ -1412,7 +1412,7 @@ export default function Capacitaciones({
               </div>
 
               <div className="text-right flex items-center justify-end text-xs text-slate-500">
-                Mostrando {filteredSessions.length} capacitaciónes
+                Mostrando {filteredSessions.length} capacitaciones
               </div>
             </div>
           </div>
@@ -1424,7 +1424,7 @@ export default function Capacitaciones({
                 <div className="bg-slate-500/10 text-slate-500 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto backdrop-blur-xs">
                   <BookOpen className="w-8 h-8" />
                 </div>
-                <h3 className="text-slate-800 font-bold text-lg">No se encontraron capacitaciónes</h3>
+                <h3 className="text-slate-800 font-bold text-lg">No se encontraron capacitaciones</h3>
                 <p className="text-slate-500 text-sm">
                   Prueba modificando los filtros o registra una nueva capacitación para empezar el control.
                 </p>

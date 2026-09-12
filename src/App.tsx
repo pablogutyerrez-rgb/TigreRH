@@ -136,7 +136,6 @@ const hasConfiguredUserAccess = (user: User) =>
   Boolean((user.areas && user.areas.length > 0) || (user.module_access && user.module_access.length > 0));
 
 const getModuleAccessKey = (area: UserArea, moduleId: string) => {
-  if (area === 'formacion' && moduleId === 'capacitaciónes') return 'formacion:capacitaciones';
   return `${area}:${moduleId}`;
 };
 
@@ -172,8 +171,8 @@ const getDefaultRouteForUser = (user: User): { currentView: string; selectionVie
     { area: 'seleccion', moduleId: 'asignacion', currentView: 'seleccion', selectionView: 'asignacion' },
     { area: 'seleccion', moduleId: 'historial', currentView: 'seleccion', selectionView: 'historial' },
     { area: 'formacion', moduleId: 'dashboard', currentView: 'dashboard' },
-    { area: 'formacion', moduleId: 'capacitaciónes', currentView: 'capacitaciónes' },
-    { area: 'formacion', moduleId: 'asistencia', currentView: 'capacitaciónes' },
+    { area: 'formacion', moduleId: 'capacitaciones', currentView: 'capacitaciones' },
+    { area: 'formacion', moduleId: 'asistencia', currentView: 'capacitaciones' },
     { area: 'formacion', moduleId: 'altas', currentView: 'altas' },
     { area: 'formacion', moduleId: 'reaperturas', currentView: 'reaperturas' },
     { area: 'formacion', moduleId: 'encuestas', currentView: 'encuestas' },
@@ -192,7 +191,7 @@ const getDefaultRouteForUser = (user: User): { currentView: string; selectionVie
   if (accessible) return accessible;
 
   if (user.rol === 'Reclutador' || user.rol === 'Analista') return { currentView: 'seleccion', selectionView: 'dashboard' };
-  if (user.rol === 'Formador') return { currentView: 'capacitaciónes' };
+  if (user.rol === 'Formador') return { currentView: 'capacitaciones' };
   return { currentView: 'dashboard' };
 };
 
@@ -204,8 +203,8 @@ const getSelectionViewForUser = (user: User): SelectionViewMode => {
 const getFormationViewForUser = (user: User): string => {
   const formationRoutes = [
     { moduleId: 'dashboard', currentView: 'dashboard' },
-    { moduleId: 'capacitaciónes', currentView: 'capacitaciónes' },
-    { moduleId: 'asistencia', currentView: 'capacitaciónes' },
+    { moduleId: 'capacitaciones', currentView: 'capacitaciones' },
+    { moduleId: 'asistencia', currentView: 'capacitaciones' },
     { moduleId: 'altas', currentView: 'altas' },
     { moduleId: 'reaperturas', currentView: 'reaperturas' },
     { moduleId: 'encuestas', currentView: 'encuestas' },
@@ -213,7 +212,7 @@ const getFormationViewForUser = (user: User): string => {
     { moduleId: 'variables', currentView: 'variables' },
     { moduleId: 'reportes', currentView: 'reportes' },
   ];
-  return formationRoutes.find(route => userHasModuleAccess(user, 'formacion', route.moduleId))?.currentView || 'capacitaciónes';
+  return formationRoutes.find(route => userHasModuleAccess(user, 'formacion', route.moduleId))?.currentView || 'capacitaciones';
 };
 
 const getAdminViewForUser = (user: User): string => {
@@ -372,14 +371,13 @@ export default function App() {
   }, [attendance, confirmations, sessions]);
 
   // --- Auth state ---
-  const [activeUser, setActiveUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('fdr_active_user');
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [activeUser, setActiveUser] = useState<User | null>(null);
   const [loginUser, setLoginUser] = useState('');
   const [loginPass, setLoginPass] = useState('');
   const [loginError, setLoginError] = useState('');
   const [authChecking, setAuthChecking] = useState(true);
+  const [platformLoading, setPlatformLoading] = useState(false);
+  const [platformError, setPlatformError] = useState('');
 
   // --- Navigation States ---
   const [currentView, setCurrentView] = useState<string>('dashboard');
@@ -554,7 +552,7 @@ export default function App() {
 
         if (!profile) {
           setActiveUser(null);
-          setLoginError('La sesión existe, pero no se encontró el perfil en Firestore/users.');
+          setLoginError('No se pudo validar el perfil de la sesión. Vuelve a iniciar sesión.');
           setAuthChecking(false);
           return;
         }
@@ -587,6 +585,8 @@ export default function App() {
     let cancelled = false;
     const loadPlatformData = async () => {
       try {
+        setPlatformLoading(true);
+        setPlatformError('');
         const data = await getBootstrapData();
         if (cancelled) return;
         setUsers(data.users);
@@ -600,6 +600,11 @@ export default function App() {
         setResponses(data.responses);
       } catch (error) {
         console.error('Error loading platform data:', error);
+        if (!cancelled) {
+          setPlatformError(error instanceof Error ? error.message : 'No se pudieron cargar los datos de la plataforma.');
+        }
+      } finally {
+        if (!cancelled) setPlatformLoading(false);
       }
     };
 
@@ -608,7 +613,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeUser, authChecking]);
+  }, [activeUser, authChecking, platformReloadKey]);
 
   const getFirebaseLoginMessage = (error: unknown) => {
     const code = (error as { code?: string })?.code;
@@ -766,7 +771,7 @@ export default function App() {
     if (sessionObj.generation_code) {
       addAuditLog(
         'Creación automática de código de generación',
-        'Registro de capacitaciónes',
+        'Registro de capacitaciones',
         `Se generó automáticamente el código de generación "${sessionObj.generation_code}" para la campaña "${newSess.campaña}".`,
         newSess.campaña,
         trainingIdentifier
@@ -776,7 +781,7 @@ export default function App() {
     // Register upload history record
     addAuditLog(
       'Creación de capacitación',
-      'Registro de capacitaciónes',
+      'Registro de capacitaciones',
       `Se creó la capacitación "${trainingIdentifier}" con ${partsWithId.length} participantes asignados a ${sessionObj.formador_nombre}.`,
       newSess.campaña,
       trainingIdentifier
@@ -868,7 +873,7 @@ export default function App() {
 
     addAuditLog(
       'Eliminación de capacitación',
-      'Registro de capacitaciónes',
+      'Registro de capacitaciones',
       `Se eliminó la capacitación "${sessionIdentifier}" y sus ${partsCount} registros asociados debido a un error de carga.`,
       sessionObj.campaña,
       sessionIdentifier
@@ -2011,6 +2016,24 @@ export default function App() {
     );
   }
 
+  const canRenderCurrentView = activeUser ? (
+    (currentView === 'seleccion' && userHasAreaAccess(activeUser, 'seleccion')) ||
+    (currentView === 'dashboard' && (permissions[activeUser.rol]?.canViewDashboard || userHasModuleAccess(activeUser, 'formacion', 'dashboard'))) ||
+    (currentView === 'capacitaciones' && userHasModuleAccess(activeUser, 'formacion', 'capacitaciones')) ||
+    (currentView === 'asistencia' && userHasModuleAccess(activeUser, 'formacion', 'asistencia')) ||
+    (currentView === 'altas' && userHasModuleAccess(activeUser, 'formacion', 'altas')) ||
+    (currentView === 'reaperturas' && userHasModuleAccess(activeUser, 'formacion', 'reaperturas')) ||
+    (currentView === 'usuarios' && userHasModuleAccess(activeUser, 'administrador', 'usuarios')) ||
+    (currentView === 'reportes' && (
+      userHasModuleAccess(activeUser, 'formacion', 'reportes') ||
+      userHasModuleAccess(activeUser, 'administrador', 'reportes')
+    )) ||
+    (currentView === 'auditoria' && userHasModuleAccess(activeUser, 'administrador', 'auditoria')) ||
+    (currentView === 'encuestas' && userHasModuleAccess(activeUser, 'formacion', 'encuestas')) ||
+    (currentView === 'variables' && userHasModuleAccess(activeUser, 'formacion', 'variables')) ||
+    (currentView === 'prospectos' && userHasModuleAccess(activeUser, 'formacion', 'prospectos'))
+  ) : false;
+
   return (
     <div className="min-h-screen bg-transparent flex flex-col font-sans relative" id="root-app">
       
@@ -2227,7 +2250,7 @@ export default function App() {
                       {
                         title: activeUser.rol === 'Formador' ? 'Aula FDR' : 'Operación FDR',
                         items: [
-                          ['capacitaciónes', activeUser.rol === 'Formador' ? 'Mis Capacitaciones' : 'Registro de Capacitaciones', BookOpen, ['Administrador', 'Analista', 'Coordinador', 'Sistemas', 'Formador', 'Reclutador']],
+                          ['capacitaciones', activeUser.rol === 'Formador' ? 'Mis Capacitaciones' : 'Registro de Capacitaciones', BookOpen, ['Administrador', 'Analista', 'Coordinador', 'Sistemas', 'Formador', 'Reclutador']],
                           ['asistencia', 'Control de Asistencia', CalendarCheck, ['Administrador', 'Analista', 'Coordinador', 'Sistemas', 'Formador', 'Reclutador']],
                           ['altas', 'Confirmación de Altas', Award, ['Administrador', 'Analista', 'Coordinador', 'Sistemas', 'Formador', 'Reclutador']],
                           ['reaperturas', activeUser.rol === 'Formador' ? 'Solicitudes enviadas' : 'Reaperturas', Clock, ['Administrador', 'Analista', 'Formador']],
@@ -2350,9 +2373,27 @@ export default function App() {
 
             {/* View Port Content */}
             <div className="p-4 sm:p-6 max-w-7xl w-full mx-auto space-y-6">
-              
+              {platformLoading && (
+                <div role="status" className="bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-semibold text-slate-600 shadow-xs">
+                  Cargando información de la plataforma...
+                </div>
+              )}
+
+              {platformError && (
+                <div role="alert" className="bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-sm text-rose-800">
+                  <span>{platformError}</span>
+                  <button
+                    type="button"
+                    onClick={() => setPlatformReloadKey((value) => value + 1)}
+                    className="self-start sm:self-auto rounded-lg bg-rose-700 px-3 py-2 text-xs font-bold text-white hover:bg-rose-800"
+                  >
+                    Reintentar
+                  </button>
+                </div>
+              )}
+
               {/* If "asistencia" is clicked but no session is selected, guide them to pick one */}
-              {currentView === 'asistencia' && !selectedSessionId && (
+              {currentView === 'asistencia' && !selectedSessionId && userHasModuleAccess(activeUser, 'formacion', 'asistencia') && (
                 <div className="space-y-4">
                   <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-xs">
                     <h3 className="text-slate-800 font-extrabold text-base mb-2">Paso 1: Seleccione la Capacitación a calificar</h3>
@@ -2402,7 +2443,7 @@ export default function App() {
               )}
 
               {/* View 2: Sessions List */}
-              {currentView === 'capacitaciónes' && userHasModuleAccess(activeUser, 'formacion', 'capacitaciones') && (
+              {currentView === 'capacitaciones' && userHasModuleAccess(activeUser, 'formacion', 'capacitaciones') && (
                 <Capacitaciones
                   sessions={sessions}
                   participants={participants}
@@ -2438,7 +2479,7 @@ export default function App() {
                   onUpdateParticipantOutcome={handleUpdateParticipantOutcome}
                   onUpdateParticipantDetails={handleUpdateParticipantDetails}
                   onDeleteParticipant={handleDeleteParticipant}
-                  onGoBack={() => { setSelectedSessionId(null); setCurrentView('capacitaciónes'); }}
+                  onGoBack={() => { setSelectedSessionId(null); setCurrentView('capacitaciones'); }}
                   onAttemptLockedEdit={handleAttemptLockedEdit}
                 />
               )}
@@ -2528,6 +2569,15 @@ export default function App() {
                   users={users}
                   sessions={sessions}
                 />
+              )}
+
+              {!platformLoading && !platformError && !canRenderCurrentView && (
+                <div role="alert" className="bg-white border border-amber-200 rounded-xl p-6 shadow-xs">
+                  <h3 className="text-base font-extrabold text-slate-900">No hay un módulo disponible</h3>
+                  <p className="mt-2 text-sm text-slate-600">
+                    Tu sesión es válida, pero este módulo no está asignado a tu usuario. Contacta al administrador para revisar tus permisos.
+                  </p>
+                </div>
               )}
 
             </div>

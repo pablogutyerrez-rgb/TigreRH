@@ -48,7 +48,10 @@ export const getCurrentUserProfile = async (uid: string) => {
   const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (!response.ok) return null;
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { message?: string } | null;
+    throw new Error(payload?.message || 'No se pudo validar la sesion.');
+  }
   const payload = await response.json() as { user?: UserProfile & { uid?: string; id?: string } };
   if (!payload.user) return null;
   return mapUserProfile(payload.user.id || payload.user.uid || uid, payload.user);
@@ -86,8 +89,10 @@ export const logoutFirebase = () => signOut(getRequiredAuth());
 
 export const subscribeToAuthChanges = (
   callback: (profile: UserProfile | null, firebaseUser: FirebaseUser | null) => void,
-) =>
-  onAuthStateChanged(getRequiredAuth(), async (firebaseUser) => {
+) => {
+  let requestVersion = 0;
+  return onAuthStateChanged(getRequiredAuth(), async (firebaseUser) => {
+    const currentRequest = ++requestVersion;
     try {
       if (!firebaseUser) {
         callback(null, null);
@@ -95,9 +100,18 @@ export const subscribeToAuthChanges = (
       }
 
       const profile = await getCurrentUserProfile(firebaseUser.uid);
+      if (
+        currentRequest !== requestVersion ||
+        getRequiredAuth().currentUser?.uid !== firebaseUser.uid
+      ) return;
       callback(profile, firebaseUser);
     } catch (error) {
+      if (
+        currentRequest !== requestVersion ||
+        getRequiredAuth().currentUser?.uid !== firebaseUser?.uid
+      ) return;
       console.error('Error loading Firebase user profile:', error);
       callback(null, firebaseUser);
     }
   });
+};

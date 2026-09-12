@@ -4,9 +4,16 @@ import { dataDb as adminDb } from '../hybridDb.js';
 
 export interface AuthenticatedUser {
   uid: string;
+  id: string;
   rol: string;
   usuario: string;
+  usuario_normalizado: string;
   nombre: string;
+  correo: string;
+  estado: 'Activo';
+  fecha_creacion: string;
+  creado_por?: string;
+  requiere_cambio_password: boolean;
   areas: string[];
   module_access: string[];
 }
@@ -74,9 +81,16 @@ export const requireAuth = async (
 
     req.user = {
       uid: decoded.uid,
+      id: decoded.uid,
       rol: String(profile?.rol || ''),
-      usuario: String(profile?.usuario_normalizado || profile?.usuario || ''),
+      usuario: String(profile?.usuario || profile?.usuario_normalizado || ''),
+      usuario_normalizado: String(profile?.usuario_normalizado || profile?.usuario || ''),
       nombre: String(profile?.nombre || ''),
+      correo: String(profile?.correo || ''),
+      estado: 'Activo',
+      fecha_creacion: String(profile?.fecha_creacion || ''),
+      creado_por: profile?.creado_por ? String(profile.creado_por) : undefined,
+      requiere_cambio_password: profile?.requiere_cambio_password === true,
       areas: Array.isArray(profile?.areas) ? profile.areas.map(String) : [],
       module_access: Array.isArray(profile?.module_access) ? profile.module_access.map(String) : [],
     };
