@@ -21,8 +21,8 @@ import { AttendanceReopenRequest, User as AppUser } from '../types';
 interface ReaperturasProps {
   reopens: AttendanceReopenRequest[];
   currentUser: AppUser;
-  onApproveRequest: (requestId: string, adminName: string) => void;
-  onRejectRequest: (requestId: string, adminName: string, reason: string) => void;
+  onApproveRequest: (requestId: string, adminName: string) => Promise<void>;
+  onRejectRequest: (requestId: string, adminName: string, reason: string) => Promise<void>;
 }
 
 const MOTIVOS_RECHAZO = [
@@ -43,6 +43,7 @@ export default function Reaperturas({
   const [rejectReason, setRejectReason] = useState(MOTIVOS_RECHAZO[0]);
   const [rejectComment, setRejectComment] = useState('');
   const [showRejectModal, setShowRejectModal] = useState(false);
+  const [processingRequestId, setProcessingRequestId] = useState<string | null>(null);
 
   const isAdmin = currentUser.rol === 'Administrador';
 
@@ -61,11 +62,30 @@ export default function Reaperturas({
   };
 
   // Confirm rejection
-  const handleConfirmReject = () => {
+  const handleApprove = async (requestId: string) => {
+    if (processingRequestId) return;
+    setProcessingRequestId(requestId);
+    try {
+      await onApproveRequest(requestId, currentUser.nombre);
+    } catch {
+      return;
+    } finally {
+      setProcessingRequestId(null);
+    }
+  };
+
+  const handleConfirmReject = async () => {
     if (!selectedRequest) return;
-    onRejectRequest(selectedRequest.id, currentUser.nombre, `${rejectReason} - ${rejectComment}`);
-    setShowRejectModal(false);
-    setSelectedRequest(null);
+    setProcessingRequestId(selectedRequest.id);
+    try {
+      await onRejectRequest(selectedRequest.id, currentUser.nombre, `${rejectReason} - ${rejectComment}`);
+      setShowRejectModal(false);
+      setSelectedRequest(null);
+    } catch {
+      return;
+    } finally {
+      setProcessingRequestId(null);
+    }
   };
 
   return (
@@ -174,14 +194,16 @@ export default function Reaperturas({
                           {req.estado === 'pendiente' ? (
                             <>
                               <button
-                                onClick={() => onApproveRequest(req.id, currentUser.nombre)}
-                                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-colors"
+                                onClick={() => void handleApprove(req.id)}
+                                disabled={processingRequestId !== null}
+                                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-colors"
                               >
-                                Aprobar
+                                {processingRequestId === req.id ? 'Guardando...' : 'Aprobar'}
                               </button>
                               <button
                                 onClick={() => handleStartReject(req)}
-                                className="bg-rose-600 hover:bg-rose-700 text-white font-bold text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-colors"
+                                disabled={processingRequestId !== null}
+                                className="bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold text-[10px] px-2.5 py-1 rounded-lg shadow-xs transition-colors"
                               >
                                 Rechazar
                               </button>
@@ -251,11 +273,11 @@ export default function Reaperturas({
                 Cancelar
               </button>
               <button
-                onClick={handleConfirmReject}
-                disabled={!rejectComment.trim()}
+                onClick={() => void handleConfirmReject()}
+                disabled={!rejectComment.trim() || processingRequestId !== null}
                 className="bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white px-4 py-2 rounded-xl"
               >
-                Registrar Rechazo
+                {processingRequestId ? 'Guardando...' : 'Registrar Rechazo'}
               </button>
             </div>
           </div>

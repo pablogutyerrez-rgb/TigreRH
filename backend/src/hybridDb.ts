@@ -9,6 +9,14 @@ type Ordering = { field: string; direction: 'asc' | 'desc' };
 export const DELETE_FIELD = Symbol('postgres-delete-field');
 
 let schemaReady: Promise<void> | undefined;
+const collectionRevisions = new Map<string, number>();
+
+export const getCollectionRevision = (collectionName: string) =>
+  collectionRevisions.get(collectionName) || 0;
+
+const markCollectionChanged = (collectionName: string) => {
+  collectionRevisions.set(collectionName, getCollectionRevision(collectionName) + 1);
+};
 
 export const ensureHybridSchema = async () => {
   if (!schemaReady) {
@@ -162,6 +170,7 @@ const writeDocumentData = async (
        updated_at = NOW()`,
     [collectionName, documentId, `${collectionName}/${documentId}`, JSON.stringify(payload)],
   );
+  markCollectionChanged(collectionName);
   return payload;
 };
 
@@ -184,6 +193,7 @@ const deleteDocumentData = async (
        updated_at = NOW()`,
     [collectionName, documentId, `${collectionName}/${documentId}`],
   );
+  markCollectionChanged(collectionName);
 };
 
 const listDocumentData = async (collectionName: string) => {
@@ -260,6 +270,7 @@ class HybridDocumentReference {
       error.code = 6;
       throw error;
     }
+    markCollectionChanged(this.collectionName);
   }
 
   async delete() {

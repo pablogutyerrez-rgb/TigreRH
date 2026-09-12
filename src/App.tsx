@@ -5,10 +5,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  loadData,
-  saveData,
-} from './db/initialData';
-import {
   User,
   UserArea,
   Campaign,
@@ -92,7 +88,9 @@ import {
 } from './services/trainingService';
 import {
   deleteParticipantRemote,
+  getReopenRequestsRemote,
   persistAttendance,
+  persistAttendanceBatch,
   persistConfirmation,
   persistParticipant,
   persistReopenRequest,
@@ -224,75 +222,24 @@ const getAdminViewForUser = (user: User): string => {
   return adminRoutes.find(route => userHasModuleAccess(user, 'administrador', route.moduleId))?.currentView || 'usuarios';
 };
 
-const LOCAL_DATA_KEYS = [
-  'fdr_users',
-  'fdr_sessions',
-  'fdr_participants',
-  'fdr_attendance',
-  'fdr_confirmations',
-  'fdr_reopens',
-  'fdr_logs',
-  'fdr_surveys',
-  'fdr_responses',
-];
-
-const ensureCleanLocalDataStore = () => {
-  if (typeof window === 'undefined') return;
-
-  const storageVersionKey = 'fdr_storage_schema';
-  const currentVersion = 'empty-production-v1';
-
-  if (localStorage.getItem(storageVersionKey) === currentVersion) return;
-
-  LOCAL_DATA_KEYS.forEach((key) => localStorage.removeItem(key));
-  localStorage.setItem(storageVersionKey, currentVersion);
-};
-
-ensureCleanLocalDataStore();
-
 export default function App() {
   const loginVideoRef = useRef<HTMLVideoElement | null>(null);
 
   // --- Persistent States ---
-  const [users, setUsers] = useState<User[]>(() => {
-    return loadData('users', EMPTY_USERS);
-  });
-  const [sessions, setSessions] = useState<TrainingSession[]>(() => {
-    const data = loadData('sessions', EMPTY_SESSIONS);
-    const hasEquifax = data.some(s => s.campaña === 'Equifax');
-    if (hasEquifax) {
-      return EMPTY_SESSIONS;
-    }
-    return data;
-  });
-  const [participants, setParticipants] = useState<Participant[]>(() => loadData('participants', EMPTY_PARTICIPANTS));
+  const [users, setUsers] = useState<User[]>(EMPTY_USERS);
+  const [sessions, setSessions] = useState<TrainingSession[]>(EMPTY_SESSIONS);
+  const [participants, setParticipants] = useState<Participant[]>(EMPTY_PARTICIPANTS);
   const participantsRef = useRef<Participant[]>(participants);
-  const [attendance, setAttendance] = useState<AttendanceRecord[]>(() => loadData('attendance', EMPTY_ATTENDANCE));
-  const [confirmations, setConfirmations] = useState<OperationConfirmation[]>(() => loadData('confirmations', EMPTY_CONFIRMATIONS));
-  const [reopens, setReopens] = useState<AttendanceReopenRequest[]>(() => loadData('reopens', EMPTY_REOPENS));
-  const [logs, setLogs] = useState<AuditLog[]>(() => loadData('logs', EMPTY_LOGS));
-  const [surveys, setSurveys] = useState<TrainingSurvey[]>(() => {
-    const loaded = loadData('surveys', EMPTY_SURVEYS);
-    return loaded.map((s: any) => ({
-      ...s,
-      estado: s.estado === 'No habilitada' ? 'Deshabilitada' : s.estado
-    }));
-  });
-  const [responses, setResponses] = useState<SurveyResponse[]>(() => loadData('responses', EMPTY_RESPONSES));
+  const [attendance, setAttendance] = useState<AttendanceRecord[]>(EMPTY_ATTENDANCE);
+  const [confirmations, setConfirmations] = useState<OperationConfirmation[]>(EMPTY_CONFIRMATIONS);
+  const [reopens, setReopens] = useState<AttendanceReopenRequest[]>(EMPTY_REOPENS);
+  const [logs, setLogs] = useState<AuditLog[]>(EMPTY_LOGS);
+  const [surveys, setSurveys] = useState<TrainingSurvey[]>(EMPTY_SURVEYS);
+  const [responses, setResponses] = useState<SurveyResponse[]>(EMPTY_RESPONSES);
 
-  // Sync to localStorage
-  useEffect(() => { saveData('users', users); }, [users]);
-  useEffect(() => { saveData('sessions', sessions); }, [sessions]);
   useEffect(() => {
     participantsRef.current = participants;
-    saveData('participants', participants);
   }, [participants]);
-  useEffect(() => { saveData('attendance', attendance); }, [attendance]);
-  useEffect(() => { saveData('confirmations', confirmations); }, [confirmations]);
-  useEffect(() => { saveData('reopens', reopens); }, [reopens]);
-  useEffect(() => { saveData('logs', logs); }, [logs]);
-  useEffect(() => { saveData('surveys', surveys); }, [surveys]);
-  useEffect(() => { saveData('responses', responses); }, [responses]);
 
   // Reactive calculation of participant final state
   useEffect(() => {
@@ -614,6 +561,31 @@ export default function App() {
       cancelled = true;
     };
   }, [activeUser, authChecking, platformReloadKey]);
+
+  useEffect(() => {
+    if (!activeUser || !['Administrador', 'Analista', 'Formador'].includes(activeUser.rol)) return;
+
+    let cancelled = false;
+    const refreshReopens = async () => {
+      try {
+        const latestReopens = await getReopenRequestsRemote();
+        if (!cancelled) setReopens(latestReopens);
+      } catch (error) {
+        if (!cancelled) console.error('Error refreshing reopen requests:', error);
+      }
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void refreshReopens();
+    };
+    const interval = window.setInterval(() => void refreshReopens(), 15_000);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [activeUser]);
 
   const getFirebaseLoginMessage = (error: unknown) => {
     const code = (error as { code?: string })?.code;
@@ -1139,7 +1111,7 @@ export default function App() {
   };
 
   // 3. Mark Single Attendance Record
-  const handleSaveAttendance = (rec: Omit<AttendanceRecord, 'id' | 'fecha_registro'>) => {
+  const handleSaveAttendance = async (rec: Omit<AttendanceRecord, 'id' | 'fecha_registro'>) => {
     const pId = rec.participant_id;
     const part = participants.find(p => p.id === pId);
     const sess = sessions.find(s => s.id === rec.training_session_id);
@@ -1152,10 +1124,15 @@ export default function App() {
       id: existingIdx !== -1 ? attendance[existingIdx].id : `att-${Math.random().toString(36).substring(2, 11)}`,
       fecha_registro: new Date().toISOString()
     };
-    void persistAttendance(updatedRec).catch((error) => {
+    const continuationRecords = buildDropoutContinuationRecords(rec, sess, [pId]);
+    try {
+      await persistAttendance(updatedRec);
+      if (continuationRecords.length > 0) await persistAttendanceBatch(continuationRecords);
+    } catch (error) {
       console.error('Error persisting attendance:', error);
       alert(error instanceof Error ? error.message : 'No se pudo guardar la asistencia.');
-    });
+      throw error;
+    }
 
     let prevStatus = 'Ninguno';
     if (existingIdx !== -1) {
@@ -1183,13 +1160,7 @@ export default function App() {
       setAttendance(prev => [...prev, updatedRec]);
     }
 
-    const continuationRecords = buildDropoutContinuationRecords(rec, sess, [pId]);
     if (continuationRecords.length > 0) {
-      continuationRecords.forEach((record) => {
-        void persistAttendance(record).catch((error) => {
-          console.error('Error persisting dropout continuation:', error);
-        });
-      });
       setAttendance(prev => {
         const continuationDays = continuationRecords.map(record => record.dia);
         const filtered = prev.filter(
@@ -1250,7 +1221,7 @@ export default function App() {
   };
 
   // 4. Bulk Attendance Record
-  const handleBulkAttendance = (
+  const handleBulkAttendance = async (
     sId: string,
     dia: number,
     status: AttendanceStatus,
@@ -1322,11 +1293,13 @@ export default function App() {
       )
       .map((record) => clearDropoutAttendanceDetails(record));
 
-    allRecords.forEach((record) => {
-      void persistAttendance(record).catch((error) => {
-        console.error('Error persisting bulk attendance:', error);
-      });
-    });
+    try {
+      await persistAttendanceBatch([...allRecords, ...reactivationRecords]);
+    } catch (error) {
+      console.error('Error persisting bulk attendance:', error);
+      alert(error instanceof Error ? error.message : 'No se pudo guardar la asistencia masiva.');
+      throw error;
+    }
 
     // Update attendance state
     setAttendance(prev => {
@@ -1520,14 +1493,15 @@ export default function App() {
       fecha_solicitud: new Date().toISOString()
     };
 
+    let savedRequest = newReq;
     try {
-      await persistReopenRequest(newReq);
+      savedRequest = (await persistReopenRequest(newReq)).request;
     } catch (error) {
       console.error('Error persisting reopen request:', error);
       alert(error instanceof Error ? error.message : 'No se pudo enviar la solicitud de reapertura.');
       throw error;
     }
-    setReopens(prev => prev.some(item => item.id === newReq.id) ? prev : [newReq, ...prev]);
+    setReopens(prev => prev.some(item => item.id === savedRequest.id) ? prev : [savedRequest, ...prev]);
 
     addAuditLog(
       'Solicitud de reapertura',
@@ -1539,7 +1513,7 @@ export default function App() {
   };
 
   // 6. Approve Reopen Request
-  const handleApproveRequest = (reqId: string, adminName: string) => {
+  const handleApproveRequest = async (reqId: string, adminName: string) => {
     const req = reopens.find(r => r.id === reqId);
     if (!req) return;
 
@@ -1554,13 +1528,17 @@ export default function App() {
       fecha_respuesta: new Date().toISOString(),
       habilitado_hasta: limit.toISOString()
     };
-    void persistReopenRequest(updatedReq).catch((error) => {
+    let savedRequest: AttendanceReopenRequest;
+    try {
+      savedRequest = (await persistReopenRequest(updatedReq)).request;
+    } catch (error) {
       console.error('Error approving reopen request:', error);
       alert(error instanceof Error ? error.message : 'No se pudo aprobar la solicitud de reapertura.');
-    });
+      throw error;
+    }
 
     setReopens(prev => prev.map(r => {
-      if (r.id === reqId) return updatedReq;
+      if (r.id === reqId) return savedRequest;
       return r;
     }));
 
@@ -1574,7 +1552,7 @@ export default function App() {
   };
 
   // 7. Reject Reopen Request
-  const handleRejectRequest = (reqId: string, adminName: string, reason: string) => {
+  const handleRejectRequest = async (reqId: string, adminName: string, reason: string) => {
     const req = reopens.find(r => r.id === reqId);
     if (!req) return;
 
@@ -1585,13 +1563,17 @@ export default function App() {
       fecha_respuesta: new Date().toISOString(),
       comentario_respuesta: reason
     };
-    void persistReopenRequest(updatedReq).catch((error) => {
+    let savedRequest: AttendanceReopenRequest;
+    try {
+      savedRequest = (await persistReopenRequest(updatedReq)).request;
+    } catch (error) {
       console.error('Error rejecting reopen request:', error);
       alert(error instanceof Error ? error.message : 'No se pudo rechazar la solicitud de reapertura.');
-    });
+      throw error;
+    }
 
     setReopens(prev => prev.map(r => {
-      if (r.id === reqId) return updatedReq;
+      if (r.id === reqId) return savedRequest;
       return r;
     }));
 

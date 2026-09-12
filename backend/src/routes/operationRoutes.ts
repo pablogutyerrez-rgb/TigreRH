@@ -16,6 +16,9 @@ import {
 
 const router = Router();
 const recordSchema = z.object({ id: z.string().min(1), training_session_id: z.string().min(1) }).passthrough();
+const attendanceBatchSchema = z.object({
+  records: z.array(recordSchema).min(1).max(1000),
+});
 const cvUploadSchema = z.object({
   training_session_id: z.string().min(1),
   file_name: z.string().min(1).max(180),
@@ -131,6 +134,46 @@ const canAccessParticipant = async (req: AuthenticatedRequest, participantId: st
   if (!sessionId || !(await ownsSession(req, sessionId))) return null;
   return { participantDoc, participant, sessionId };
 };
+
+router.put(
+  '/attendance/bulk',
+  requireAuth,
+  requireRole(['Administrador', 'Analista', 'Formador']),
+  async (req: AuthenticatedRequest, res: Response) => {
+    const parsed = attendanceBatchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ message: 'Los registros de asistencia son invalidos.' });
+      return;
+    }
+
+    const sessions = new Map<string, Record<string, unknown>>();
+    for (const record of parsed.data.records) {
+      const sessionId = String(record.training_session_id);
+      if (!sessions.has(sessionId)) {
+        const session = await adminDb.collection('sessions').doc(sessionId).get();
+        if (!session.exists || !(await ownsSession(req, sessionId))) {
+          res.status(403).json({ message: 'No puedes modificar esta asistencia.' });
+          return;
+        }
+        sessions.set(sessionId, session.data());
+      }
+      if (
+        req.user!.rol === 'Formador' &&
+        !canTrainerEditAttendanceDay(sessions.get(sessionId), req.user!.uid, Number(record.dia))
+      ) {
+        res.status(403).json({ message: 'Uno de los dias no corresponde a tu fase asignada.' });
+        return;
+      }
+    }
+
+    const writer = adminDb.bulkWriter();
+    parsed.data.records.forEach((record) => {
+      writer.set(adminDb.collection('attendance').doc(String(record.id)), record, { merge: true });
+    });
+    await writer.close();
+    res.json({ ok: true, saved: parsed.data.records.length });
+  },
+);
 
 router.put(
   '/attendance/:id',
@@ -586,7 +629,21 @@ router.put(
     }
 
     await adminDb.collection('reopens').doc(req.params.id).set(parsed.data, { merge: true });
-    res.json({ ok: true });
+    const saved = await adminDb.collection('reopens').doc(req.params.id).get();
+    res.json({ ok: true, request: { id: saved.id, ...saved.data() } });
+  },
+);
+
+router.get(
+  '/reopens',
+  requireAuth,
+  requireRole(['Administrador', 'Analista', 'Formador']),
+  async (req: AuthenticatedRequest, res: Response) => {
+    const snapshot = await adminDb.collection('reopens').get();
+    const requests = (snapshot.docs
+      .map((document) => ({ id: document.id, ...document.data() })) as Array<Record<string, unknown>>)
+      .filter((request) => req.user!.rol !== 'Formador' || request.formador_id === req.user!.uid);
+    res.set('Cache-Control', 'no-store').json({ requests });
   },
 );
 

@@ -48,7 +48,7 @@ interface AttendanceControlProps {
   reopens: AttendanceReopenRequest[];
   currentUser: AppUser;
   simulatedTime: { hour: number; minute: number; isSimulated: boolean };
-  onSaveAttendance: (record: Omit<AttendanceRecord, 'id' | 'fecha_registro'>) => void;
+  onSaveAttendance: (record: Omit<AttendanceRecord, 'id' | 'fecha_registro'>) => Promise<void>;
   onBulkAttendance: (
     sessionId: string,
     dia: number,
@@ -58,7 +58,7 @@ interface AttendanceControlProps {
     obs?: string,
     evidencia_nombre?: string,
     evidencia_imagen?: string,
-  ) => void;
+  ) => Promise<void>;
   onRequestReopen: (newRequest: Omit<AttendanceReopenRequest, 'id' | 'formador_id' | 'formador_nombre' | 'estado' | 'fecha_solicitud'>) => Promise<void>;
   onUpdateParticipantOutcome?: (
     pId: string,
@@ -185,6 +185,7 @@ export default function AttendanceControl({
   const [reopenMotivo, setReopenMotivo] = useState('Se me pasó el horario de registro');
   const [reopenComentario, setReopenComentario] = useState('');
   const [isSubmittingReopen, setIsSubmittingReopen] = useState(false);
+  const [isSavingAttendance, setIsSavingAttendance] = useState(false);
 
   // Bulk actions status and Bulk Dialog Modal
   const [showBulkDialogModal, setShowBulkDialogModal] = useState(false);
@@ -602,7 +603,8 @@ export default function AttendanceControl({
       const hasApprovedReopen = reopens.some(r =>
         r.training_session_id === session.id &&
         r.dia_capacitacion === selectedDay &&
-        r.estado === 'aprobada'
+        r.estado === 'aprobada' &&
+        (!r.habilitado_hasta || new Date(r.habilitado_hasta).getTime() >= Date.now())
       );
 
       return !hasApprovedReopen;
@@ -639,7 +641,8 @@ export default function AttendanceControl({
   };
 
   // Handle single attendance click change
-  const handleStatusChange = (participant: Participant, day: number, status: AttendanceStatus) => {
+  const handleStatusChange = async (participant: Participant, day: number, status: AttendanceStatus) => {
+    if (isSavingAttendance) return;
     if (isTimeLocked) {
       if (currentUser.rol === 'Formador' && !canRoleEditAttendanceDay(day)) {
         alert(day <= 5
@@ -682,14 +685,21 @@ export default function AttendanceControl({
       setObsEvidenceFile(existing?.evidencia_imagen || '');
       setShowObservationModal(true);
     } else {
-      onSaveAttendance({
-        participant_id: participant.id,
-        training_session_id: session.id,
-        dia: day,
-        fecha: getDayDate(day),
-        estado_asistencia: status,
-        registrado_por: currentUser.id
-      });
+      setIsSavingAttendance(true);
+      try {
+        await onSaveAttendance({
+          participant_id: participant.id,
+          training_session_id: session.id,
+          dia: day,
+          fecha: getDayDate(day),
+          estado_asistencia: status,
+          registrado_por: currentUser.id
+        });
+      } catch {
+        return;
+      } finally {
+        setIsSavingAttendance(false);
+      }
     }
   };
 
@@ -705,24 +715,31 @@ export default function AttendanceControl({
   };
 
   // Confirm Deserción Modal
-  const handleConfirmDesistio = () => {
+  const handleConfirmDesistio = async () => {
     if (!modalParticipant) return;
-    onSaveAttendance({
-      participant_id: modalParticipant.id,
-      training_session_id: session.id,
-      dia: selectedDay,
-      fecha: getDayDate(selectedDay),
-      estado_asistencia: desistioStatus,
-      motivo_desercion: desistioMotivo,
-      observacion: desistioComentario,
-      evidencia_nombre: desistioEvidenceName,
-      evidencia_imagen: desistioEvidenceImage,
-      registrado_por: currentUser.id
-    });
-    setShowDesistioModal(false);
-    setModalParticipant(null);
-    setDesistioEvidenceName('');
-    setDesistioEvidenceImage('');
+    setIsSavingAttendance(true);
+    try {
+      await onSaveAttendance({
+        participant_id: modalParticipant.id,
+        training_session_id: session.id,
+        dia: selectedDay,
+        fecha: getDayDate(selectedDay),
+        estado_asistencia: desistioStatus,
+        motivo_desercion: desistioMotivo,
+        observacion: desistioComentario,
+        evidencia_nombre: desistioEvidenceName,
+        evidencia_imagen: desistioEvidenceImage,
+        registrado_por: currentUser.id
+      });
+      setShowDesistioModal(false);
+      setModalParticipant(null);
+      setDesistioEvidenceName('');
+      setDesistioEvidenceImage('');
+    } catch {
+      return;
+    } finally {
+      setIsSavingAttendance(false);
+    }
   };
 
   // Submit Reopen Request
@@ -784,17 +801,24 @@ export default function AttendanceControl({
     setShowBulkDialogModal(true);
   };
 
-  const handleConfirmBulkApply = () => {
-    onBulkAttendance(
-      session.id,
-      selectedDay,
-      bulkStatus,
-      selectedParticipants,
-      isDropoutStatus(bulkStatus) ? bulkMotivoDesercion : undefined,
-      bulkComentario || undefined,
-      bulkEvidenceName || undefined,
-      bulkEvidenceImage || undefined
-    );
+  const handleConfirmBulkApply = async () => {
+    setIsSavingAttendance(true);
+    try {
+      await onBulkAttendance(
+        session.id,
+        selectedDay,
+        bulkStatus,
+        selectedParticipants,
+        isDropoutStatus(bulkStatus) ? bulkMotivoDesercion : undefined,
+        bulkComentario || undefined,
+        bulkEvidenceName || undefined,
+        bulkEvidenceImage || undefined
+      );
+    } catch {
+      return;
+    } finally {
+      setIsSavingAttendance(false);
+    }
 
     // Reset selection & options
     setSelectedParticipants([]);
@@ -1866,10 +1890,10 @@ export default function AttendanceControl({
               </button>
               <button
                 onClick={handleConfirmDesistio}
-                disabled={!desistioComentario.trim()}
+                disabled={!desistioComentario.trim() || isSavingAttendance}
                 className="bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold text-xs px-4 py-2 rounded-xl"
               >
-                Confirmar {desistioStatus === 'Baja' ? 'Baja' : 'Deserción'}
+                {isSavingAttendance ? 'Guardando...' : `Confirmar ${desistioStatus === 'Baja' ? 'Baja' : 'Deserción'}`}
               </button>
             </div>
           </div>
@@ -2016,31 +2040,38 @@ export default function AttendanceControl({
                 Cancelar
               </button>
               <button
-                onClick={() => {
+                onClick={async () => {
                   if (obsModalStatus === 'Faltó' && !obsModalValue.trim()) {
                     alert('Debe rellenar obligatoriamente la observación para registrar una Falta.');
                     return;
                   }
-                  onSaveAttendance({
-                    participant_id: obsModalParticipant.id,
-                    training_session_id: session.id,
-                    dia: obsModalDay,
-                    fecha: getDayDate(obsModalDay),
-                    estado_asistencia: obsModalStatus,
-                    observacion: obsModalValue,
-                    evidencia_nombre: obsEvidenceName || undefined,
-                    evidencia_imagen: obsEvidenceFile || undefined,
-                    registrado_por: currentUser.id
-                  });
+                  setIsSavingAttendance(true);
+                  try {
+                    await onSaveAttendance({
+                      participant_id: obsModalParticipant.id,
+                      training_session_id: session.id,
+                      dia: obsModalDay,
+                      fecha: getDayDate(obsModalDay),
+                      estado_asistencia: obsModalStatus,
+                      observacion: obsModalValue,
+                      evidencia_nombre: obsEvidenceName || undefined,
+                      evidencia_imagen: obsEvidenceFile || undefined,
+                      registrado_por: currentUser.id
+                    });
+                  } catch {
+                    return;
+                  } finally {
+                    setIsSavingAttendance(false);
+                  }
                   setShowObservationModal(false);
                   setObsModalParticipant(null);
                   setObsEvidenceName('');
                   setObsEvidenceFile('');
                 }}
-                disabled={obsModalStatus === 'Faltó' && !obsModalValue.trim()}
+                disabled={(obsModalStatus === 'Faltó' && !obsModalValue.trim()) || isSavingAttendance}
                 className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs px-4 py-2 rounded-xl cursor-pointer"
               >
-                Guardar Novedad
+                {isSavingAttendance ? 'Guardando...' : 'Guardar Novedad'}
               </button>
             </div>
           </div>
@@ -2131,10 +2162,10 @@ export default function AttendanceControl({
               </button>
               <button
                 onClick={handleConfirmBulkApply}
-                disabled={(bulkStatus === 'Desistió' || bulkStatus === 'Baja' || bulkStatus === 'Faltó') && !bulkComentario.trim()}
+                disabled={isSavingAttendance || ((bulkStatus === 'Desistió' || bulkStatus === 'Baja' || bulkStatus === 'Faltó') && !bulkComentario.trim())}
                 className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs px-4 py-2 rounded-xl cursor-pointer"
               >
-                Confirmar Marcado Masivo
+                {isSavingAttendance ? 'Guardando...' : 'Confirmar Marcado Masivo'}
               </button>
             </div>
           </div>

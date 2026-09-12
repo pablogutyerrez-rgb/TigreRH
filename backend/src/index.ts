@@ -15,6 +15,7 @@ import { trainingRoutes } from './routes/trainingRoutes.js';
 import { trainingVariableRoutes } from './routes/trainingVariableRoutes.js';
 import { userRoutes } from './routes/userRoutes.js';
 import { getPostgresPool } from './postgres.js';
+import { ensureHybridSchema } from './hybridDb.js';
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
@@ -130,11 +131,19 @@ if (frontendDistPath) {
   });
 }
 
-app.listen(port, '0.0.0.0', () => {
-  console.log(`FDR backend listening on port ${port}`);
-  console.log(
-    frontendDistPath
-      ? `Serving frontend from ${frontendDistPath}`
-      : `Frontend build not found. Checked: ${frontendDistCandidates.join(', ')}`,
-  );
+const start = async () => {
+  await ensureHybridSchema();
+  app.listen(port, '0.0.0.0', () => {
+    console.log(`FDR backend listening on port ${port}`);
+    console.log(
+      frontendDistPath
+        ? `Serving frontend from ${frontendDistPath}`
+        : `Frontend build not found. Checked: ${frontendDistCandidates.join(', ')}`,
+    );
+  });
+};
+
+void start().catch((error) => {
+  console.error('Backend startup failed:', error);
+  process.exitCode = 1;
 });

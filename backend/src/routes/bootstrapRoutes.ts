@@ -1,5 +1,5 @@
 import { Router, type Response } from 'express';
-import { dataDb as adminDb } from '../hybridDb.js';
+import { dataDb as adminDb, getCollectionRevision } from '../hybridDb.js';
 import {
   type AuthenticatedRequest,
   requireAuth,
@@ -8,16 +8,18 @@ import {
 const router = Router();
 const collectionCache = new Map<string, {
   expiresAt: number;
+  revision: number;
   data?: Array<Record<string, unknown>>;
   pending?: Promise<Array<Record<string, unknown>>>;
 }>();
-const COLLECTION_CACHE_TTL_MS = 10 * 60 * 1000;
+const COLLECTION_CACHE_TTL_MS = 30 * 1000;
 
 const readCollection = async (name: string, bypassCache = false) => {
   const now = Date.now();
+  const revision = getCollectionRevision(name);
   const cached = collectionCache.get(name);
-  if (!bypassCache && cached?.data && cached.expiresAt > now) return cached.data;
-  if (!bypassCache && cached?.pending) return cached.pending;
+  if (!bypassCache && cached?.revision === revision && cached?.data && cached.expiresAt > now) return cached.data;
+  if (!bypassCache && cached?.revision === revision && cached?.pending) return cached.pending;
 
   const pending = adminDb.collection(name).get().then((snapshot) =>
     snapshot.docs.map((item) => ({
@@ -26,7 +28,7 @@ const readCollection = async (name: string, bypassCache = false) => {
     })) as Array<Record<string, unknown>>,
   );
   if (!bypassCache) {
-    collectionCache.set(name, { expiresAt: now + COLLECTION_CACHE_TTL_MS, pending });
+    collectionCache.set(name, { expiresAt: now + COLLECTION_CACHE_TTL_MS, revision, pending });
   }
 
   try {
@@ -34,6 +36,7 @@ const readCollection = async (name: string, bypassCache = false) => {
     if (!bypassCache) {
       collectionCache.set(name, {
         data,
+        revision,
         expiresAt: Date.now() + COLLECTION_CACHE_TTL_MS,
       });
     }

@@ -5,7 +5,7 @@ import type { AttendanceRecord, AttendanceReopenRequest, OperationConfirmation, 
 const API_BASE_URL =
   getRuntimeEnv('VITE_API_BASE_URL') || (import.meta.env.PROD ? '' : 'http://localhost:8080');
 
-const save = async (path: string, body: unknown) => {
+const save = async <T = void>(path: string, body: unknown): Promise<T> => {
   const token = await auth?.currentUser?.getIdToken();
   if (!token) throw new Error('Sesion no disponible.');
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -18,6 +18,7 @@ const save = async (path: string, body: unknown) => {
   });
   const data = await response.json().catch(() => null);
   if (!response.ok) throw new Error(data?.message || 'No se pudo guardar el registro.');
+  return data as T;
 };
 
 const post = async <T>(path: string, body: unknown, forceTokenRefresh = false): Promise<T> => {
@@ -64,6 +65,9 @@ const remove = async (path: string) => {
 
 export const persistAttendance = (record: AttendanceRecord) =>
   save(`/api/operations/attendance/${record.id}`, record);
+
+export const persistAttendanceBatch = (records: AttendanceRecord[]) =>
+  save<{ ok: true; saved: number }>('/api/operations/attendance/bulk', { records });
 
 export const persistConfirmation = (confirmation: OperationConfirmation) =>
   save(`/api/operations/confirmations/${confirmation.id}`, confirmation);
@@ -126,4 +130,9 @@ export const deleteParticipantRemote = (participantId: string) =>
   remove(`/api/operations/participants/${participantId}`);
 
 export const persistReopenRequest = (request: AttendanceReopenRequest) =>
-  save(`/api/operations/reopens/${request.id}`, request);
+  save<{ ok: true; request: AttendanceReopenRequest }>(`/api/operations/reopens/${request.id}`, request);
+
+export const getReopenRequestsRemote = async () => {
+  const result = await get<{ requests: AttendanceReopenRequest[] }>('/api/operations/reopens');
+  return result.requests;
+};
