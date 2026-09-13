@@ -23,3 +23,18 @@ export const updateSurveyStatusRemote = async (
   const data = await response.json().catch(() => null);
   if (!response.ok) throw new Error(data?.message || 'No se pudo actualizar la encuesta.');
 };
+
+export const updateSurveyLinkAssignmentsRemote = async (surveyId: string, userIds: string[]) => {
+  const token = await auth?.currentUser?.getIdToken();
+  if (!token) throw new Error('Sesion no disponible.');
+  const response = await fetch(`${API_BASE_URL}/api/surveys/${surveyId}/link-assignments`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ userIds }),
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(data?.message || 'No se pudieron actualizar las asignaciones.');
+};

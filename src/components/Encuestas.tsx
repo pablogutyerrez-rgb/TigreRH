@@ -52,7 +52,7 @@ import * as XLSX from 'xlsx';
 import { sendSurveyInvitations } from '../services/surveyEmailService';
 import { permissions } from '../utils/permissions';
 import { isSurveyEligibleParticipant } from '../utils/trainingProgress';
-import { isSessionAssignedTrainer } from '../utils/trainingAssignments';
+import { getSessionTrainerIds, getSessionTrainerNames, isSessionAssignedTrainer } from '../utils/trainingAssignments';
 
 interface EncuestasProps {
   surveys: TrainingSurvey[];
@@ -60,9 +60,11 @@ interface EncuestasProps {
   sessions: TrainingSession[];
   participants: Participant[];
   attendance: AttendanceRecord[];
+  users: User[];
   currentUser: User;
   onUpdateSurveyStatus: (surveyId: string, status: SurveyStatus) => void;
   onAddSurvey?: (survey: TrainingSurvey) => void;
+  onUpdateSurveyAssignments: (surveyId: string, userIds: string[]) => void;
   onAuditLog: (
     accion: string,
     modulo: string,
@@ -84,14 +86,16 @@ export default function Encuestas({
   sessions,
   participants,
   attendance,
+  users,
   currentUser,
   onUpdateSurveyStatus,
   onAddSurvey,
+  onUpdateSurveyAssignments,
   onAuditLog,
   onOpenPublicSurvey
 }: EncuestasProps) {
   // --- Tab State ---
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'comentarios' | 'respuestas' | 'monitoreo' | 'configuracion'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'comentarios' | 'respuestas' | 'monitoreo' | 'links' | 'configuracion'>('dashboard');
 
   // --- Filtering State ---
   const [filterCampaign, setFilterCampaign] = useState('');
@@ -112,6 +116,8 @@ export default function Encuestas({
   const [surveyStatus, setSurveyStatus] = useState<SurveyStatus>('Borrador');
   const [tokenInput, setTokenInput] = useState('');
   const [deleteSurveyId, setDeleteSurveyId] = useState<string | null>(null);
+  const [assignmentSurveyId, setAssignmentSurveyId] = useState<string | null>(null);
+  const [assignmentUserIds, setAssignmentUserIds] = useState<string[]>([]);
 
   // Copy Feedback state
   const [copiedSurveyId, setCopiedSurveyId] = useState<string | null>(null);
@@ -159,6 +165,9 @@ export default function Encuestas({
     return session?.generation_code || session?.nombre_generacion || survey.codigo_generacion;
   };
 
+  const normalizeFilterValue = (value?: string) =>
+    (value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+
   const getSurveyEligibleParticipants = (survey: TrainingSurvey) => {
     const sessionAttendance = attendance.filter(
       (record) => record.training_session_id === survey.training_session_id,
@@ -193,6 +202,7 @@ export default function Encuestas({
   const normalizedResponses = useMemo(() => {
     return responses.map(r => {
       const survey = surveys.find(s => s.id === r.training_survey_id);
+      const session = survey ? getSurveySession(survey) : undefined;
       const currentGenerationCode = survey ? getSurveyGenerationCode(survey) : r.codigo_generacion;
       const q1 = r.q1 !== undefined ? r.q1 : (r.p1 || 0);
       const q2 = r.q2 !== undefined ? r.q2 : (r.p2 || 0);
@@ -217,10 +227,10 @@ export default function Encuestas({
       
       return {
         ...r,
-        campaña: r.campaña || (r as unknown as { campana?: string }).campana || survey?.campaña || '',
+        campaña: session?.campaña || survey?.campaña || r.campaña || (r as unknown as { campana?: string }).campana || '',
         codigo_generacion: currentGenerationCode || '',
-        formador_id: r.formador_id || survey?.formador_id || '',
-        formador_nombre: r.formador_nombre || survey?.formador_nombre || '',
+        formador_id: survey?.formador_id || r.formador_id || '',
+        formador_nombre: survey?.formador_nombre || r.formador_nombre || '',
         q1, q2, q3, q4, q5, q6, q7, q8,
         total_score,
         final_score_20,
@@ -245,8 +255,35 @@ export default function Encuestas({
 
   // Only active surveys (excluding deleted ones)
   const visibleSurveys = useMemo(() => {
-    return surveys.filter(s => s.estado !== 'Eliminada' && visibleSessionIds.includes(s.training_session_id));
-  }, [surveys, visibleSessionIds]);
+    return surveys.filter(s =>
+      s.estado !== 'Eliminada' &&
+      (visibleSessionIds.includes(s.training_session_id) || s.link_assigned_user_ids?.includes(currentUser.id)),
+    );
+  }, [surveys, visibleSessionIds, currentUser.id]);
+
+  const assignedLinkSurveys = useMemo(() => visibleSurveys.filter((survey) => {
+    if (survey.estado !== 'Habilitada') return false;
+    if (isAdmin) return true;
+    if (survey.link_assigned_user_ids?.includes(currentUser.id)) return true;
+    const session = getSurveySession(survey);
+    return Boolean(session && isSessionAssignedTrainer(session, currentUser.id));
+  }), [visibleSurveys, currentUser.id, isAdmin, sessions]);
+
+  const assignableUsers = useMemo(
+    () => users.filter((user) => user.estado === 'Activo' && user.id !== currentUser.id),
+    [users, currentUser.id],
+  );
+
+  const openAssignmentModal = (survey: TrainingSurvey) => {
+    setAssignmentSurveyId(survey.id);
+    setAssignmentUserIds(survey.link_assigned_user_ids || []);
+  };
+
+  const saveAssignments = () => {
+    if (!assignmentSurveyId) return;
+    onUpdateSurveyAssignments(assignmentSurveyId, assignmentUserIds);
+    setAssignmentSurveyId(null);
+  };
 
   // General filtered responses from non-deleted surveys
   const filteredResponses = useMemo(() => {
@@ -255,16 +292,13 @@ export default function Encuestas({
       if (!survey || survey.estado === 'Eliminada') return false;
       if (!visibleSessionIds.includes(survey.training_session_id)) return false;
 
-      // Campaña filter
-      if (filterCampaign && r.campaña !== filterCampaign) return false;
-      // Generación filter
-      if (filterGenerator && r.codigo_generacion !== filterGenerator) return false;
-      // Formador filter
-      if (filterTrainer && r.formador_id !== filterTrainer) return false;
-
       const session = sessions.find(s => s.id === survey.training_session_id);
-      // Tipo capacitacion filter
-      if (filterType && session && session.tipo_capacitacion !== filterType) return false;
+      const campaign = session?.campaña || survey.campaña || r.campaña;
+      const generation = session?.generation_code || session?.nombre_generacion || survey.codigo_generacion || r.codigo_generacion;
+      if (filterCampaign && normalizeFilterValue(campaign) !== normalizeFilterValue(filterCampaign)) return false;
+      if (filterGenerator && normalizeFilterValue(generation) !== normalizeFilterValue(filterGenerator)) return false;
+      if (filterTrainer && (!session || !getSessionTrainerIds(session).includes(filterTrainer))) return false;
+      if (filterType && normalizeFilterValue(session?.tipo_capacitacion) !== normalizeFilterValue(filterType)) return false;
 
       // Date range filter
       if (dateStart) {
@@ -517,20 +551,31 @@ export default function Encuestas({
 
   // --- LISTS FOR INPUT DROPDOWNS ---
   const campaignsList = useMemo(() => {
-    return Array.from(new Set(visibleSurveys.map(s => s.campaña)));
-  }, [visibleSurveys]);
+    return Array.from(new Set(visibleSurveys.map(s => getSurveySession(s)?.campaña || s.campaña).filter(Boolean))).sort();
+  }, [visibleSurveys, sessions]);
 
   const trainersList = useMemo(() => {
     const unique: { [key: string]: string } = {};
     visibleSurveys.forEach(s => {
-      unique[s.formador_id] = s.formador_nombre;
+      const session = getSurveySession(s);
+      const ids = session ? getSessionTrainerIds(session) : [s.formador_id];
+      const names = session ? getSessionTrainerNames(session) : [s.formador_nombre];
+      ids.forEach((id, index) => {
+        if (id) unique[id] = names[index] || users.find(user => user.id === id)?.nombre || s.formador_nombre;
+      });
     });
     return Object.keys(unique).map(id => ({ id, nombre: unique[id] }));
-  }, [visibleSurveys]);
+  }, [visibleSurveys, sessions, users]);
 
   const generationsList = useMemo(() => {
     return Array.from(new Set(visibleSurveys.map(s => getSurveyGenerationCode(s))));
   }, [visibleSurveys, sessions]);
+
+  const trainingTypesList = useMemo(() => Array.from(new Set(
+    visibleSurveys
+      .map((survey) => getSurveySession(survey)?.tipo_capacitacion || survey.training_type)
+      .filter(Boolean) as string[],
+  )).sort(), [visibleSurveys, sessions]);
 
   // Sessions that do not have an active satisfaction survey yet (to avoid duplicates)
   const sessionsWithoutSurvey = useMemo(() => {
@@ -971,9 +1016,9 @@ export default function Encuestas({
             </select>
           </div>
 
-          {/* Generación */}
+          {/* Código de generación */}
           <div className="space-y-1">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Generación</label>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Código</label>
             <select
               value={filterGenerator}
               onChange={(e) => setFilterGenerator(e.target.value)}
@@ -1017,9 +1062,9 @@ export default function Encuestas({
               className="w-full bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-xl px-3 py-2 font-semibold outline-hidden focus:ring-1 focus:ring-fuchsia-500"
             >
               <option value="">Todos</option>
-              <option value="Capacitación regular">Capacitación regular</option>
-              <option value="Capacitación flash">Capacitación flash</option>
-              <option value="Capacitación GPON">Capacitación GPON</option>
+              {trainingTypesList.map((trainingType) => (
+                <option key={trainingType} value={trainingType}>{trainingType}</option>
+              ))}
             </select>
           </div>
 
@@ -1101,6 +1146,17 @@ export default function Encuestas({
         >
           <ListFilter className="w-4 h-4" />
           Respuestas Individuales
+        </button>
+        <button
+          onClick={() => setActiveTab('links')}
+          className={`py-2.5 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'links'
+              ? 'border-fuchsia-600 text-fuchsia-600 font-extrabold'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          <Link2 className="w-4 h-4" />
+          LINKS
         </button>
         {/* Config surveys available for admin/formador/analista */}
         {(isAdmin || isTrainer || currentUser.rol === 'Analista') && (
@@ -1673,6 +1729,56 @@ export default function Encuestas({
         </div>
       )}
 
+      {activeTab === 'links' && (
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-xs space-y-5" id="links-tab-content">
+          <div className="border-b border-slate-100 pb-3">
+            <h3 className="text-slate-800 font-extrabold text-sm flex items-center gap-2">
+              <Link2 className="w-4.5 h-4.5 text-indigo-500" />
+              LINKS
+            </h3>
+          </div>
+          {assignedLinkSurveys.length === 0 ? (
+            <div className="p-8 text-center text-slate-400 text-xs font-bold">
+              No tienes enlaces de encuestas habilitados o asignados.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-extrabold">
+                    <th className="p-3">Generación</th>
+                    <th className="p-3">Campaña</th>
+                    <th className="p-3">Formador</th>
+                    <th className="p-3">Enlace</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {assignedLinkSurveys.map((survey) => {
+                    const origin = window.location.origin + window.location.pathname;
+                    const fullLink = `${origin}?view=survey&token=${survey.token}`;
+                    return (
+                      <tr key={survey.id} className="hover:bg-slate-50/40 font-medium text-slate-700">
+                        <td className="p-3 font-extrabold text-slate-800 whitespace-nowrap">{getSurveyGenerationCode(survey)}</td>
+                        <td className="p-3 whitespace-nowrap">{survey.campaña}</td>
+                        <td className="p-3 whitespace-nowrap">{getTrainerDisplayName(survey.formador_id, survey.formador_nombre)}</td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-1.5 max-w-[420px]">
+                            <input type="text" readOnly value={fullLink} className="bg-slate-50 border border-slate-200 text-slate-500 rounded-lg px-2 py-1 text-[9px] font-mono outline-hidden flex-1 truncate" />
+                            <button type="button" onClick={() => handleCopyLink(survey.token, survey.id)} className="bg-slate-100 hover:bg-slate-200 p-1.5 rounded-lg text-slate-500 transition-colors" title="Copiar enlace">
+                              {copiedSurveyId === survey.id ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* TAB 4.5: CONFIGURACION DE ENLACES (HABILITAR/DESACTIVAR/ELIMINAR) */}
       {activeTab === 'configuracion' && permissions[currentUser.rol]?.canCreateSurvey && (
         <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-xs space-y-5" id="configuracion-tab-content">
@@ -1695,13 +1801,14 @@ export default function Encuestas({
                   <th className="p-3">Formador</th>
                   <th className="p-3">Estado Encuesta</th>
                   <th className="p-3">Enlace de Acceso</th>
+                  <th className="p-3">Acceso Interno</th>
                   <th className="p-3 text-right">Acción</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {visibleSurveys.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="p-6 text-center text-slate-400 font-bold">No hay encuestas registradas bajo tu alcance de vista.</td>
+                    <td colSpan={7} className="p-6 text-center text-slate-400 font-bold">No hay encuestas registradas bajo tu alcance de vista.</td>
                   </tr>
                 ) : (
                   visibleSurveys.map((s) => {
@@ -1725,7 +1832,7 @@ export default function Encuestas({
                           </span>
                         </td>
                         <td className="p-3">
-                          {s.estado === 'Habilitada' ? (
+                          {s.estado === 'Habilitada' && s.token ? (
                             <div className="flex items-center gap-1.5 max-w-[280px]">
                               <input
                                 type="text"
@@ -1749,8 +1856,25 @@ export default function Encuestas({
                               </button>
                             </div>
                           ) : (
-                            <span className="text-slate-400 text-[10px] italic">No disponible (Encuesta desactivada)</span>
+                            <span className="text-slate-400 text-[10px] italic">
+                              {s.estado === 'Habilitada' ? 'Enlace disponible solo para usuarios asignados' : 'No disponible (Encuesta desactivada)'}
+                            </span>
                           )}
+                        </td>
+                        <td className="p-3 whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-slate-500">{s.link_assigned_user_ids?.length || 0} asignados</span>
+                            {isAdmin && (
+                              <button
+                                type="button"
+                                onClick={() => openAssignmentModal(s)}
+                                className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 p-1.5 rounded-lg transition-colors"
+                                title="Asignar usuarios al enlace"
+                              >
+                                <UserCheck className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
                         </td>
                         <td className="p-3 text-right">
                           <div className="flex items-center justify-end gap-1.5">
@@ -1808,6 +1932,41 @@ export default function Encuestas({
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {assignmentSurveyId && isAdmin && (
+        <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs" role="dialog" aria-modal="true">
+          <div className="w-full max-w-lg bg-white rounded-3xl shadow-2xl p-6 space-y-5 border border-slate-100">
+            <div className="border-b border-slate-100 pb-3">
+              <h3 className="text-slate-800 font-extrabold text-base">Asignar enlace de encuesta</h3>
+              <p className="text-slate-400 text-[11px] mt-1">Selecciona los usuarios que podrán ver y copiar este enlace en LINKS.</p>
+            </div>
+            <div className="max-h-[50vh] overflow-y-auto divide-y divide-slate-100 border border-slate-100 rounded-xl">
+              {assignableUsers.map((user) => (
+                <label key={user.id} className="flex items-center gap-3 p-3 hover:bg-slate-50 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={assignmentUserIds.includes(user.id)}
+                    onChange={(event) => setAssignmentUserIds((current) =>
+                      event.target.checked
+                        ? Array.from(new Set([...current, user.id]))
+                        : current.filter((id) => id !== user.id),
+                    )}
+                    className="h-4 w-4 accent-fuchsia-600"
+                  />
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-slate-800 truncate">{user.nombre}</p>
+                    <p className="text-[10px] text-slate-400">{user.rol} · {user.usuario}</p>
+                  </div>
+                </label>
+              ))}
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button type="button" onClick={() => setAssignmentSurveyId(null)} className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl py-3 text-xs">Cancelar</button>
+              <button type="button" onClick={saveAssignments} className="flex-1 bg-fuchsia-600 hover:bg-fuchsia-700 text-white font-bold rounded-xl py-3 text-xs">Guardar asignaciones</button>
+            </div>
           </div>
         </div>
       )}

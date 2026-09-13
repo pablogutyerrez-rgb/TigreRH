@@ -32,10 +32,12 @@ import {
   Calendar,
   Filter,
   RefreshCw,
-  Award
+  Award,
+  Eye,
+  X,
+  FileUp
 } from 'lucide-react';
 import { TrainingSession, Participant, AttendanceRecord, OperationConfirmation, AttendanceReopenRequest, User as AppUser } from '../types';
-import { getTrainingDaysCount } from '../utils/trainingDays';
 import {
   getSessionActivityMonths,
   getTrainingTemporalStatus,
@@ -67,7 +69,54 @@ const normalizeAttendanceStatus = (status?: string) =>
 
 const isPresentAttendance = (status?: string) => ['asistio', 'tardanza'].includes(normalizeAttendanceStatus(status));
 const isDesertionAttendance = (status?: string) => ['desistio', 'baja'].includes(normalizeAttendanceStatus(status));
-const isDesertionFinalState = (status?: string) => normalizeAttendanceStatus(status) === 'desistio';
+
+const calculatePhaseMetrics = (
+  participantIds: Set<string>,
+  attendanceRecords: AttendanceRecord[],
+  confirmationRecords: OperationConfirmation[],
+) => {
+  const attendantsByDay = new Map<number, Set<string>>(
+    [1, 2, 5, 6, 10].map((day) => [day, new Set<string>()]),
+  );
+  const ojtParticipantIds = new Set<string>();
+
+  attendanceRecords.forEach((record) => {
+    if (!participantIds.has(record.participant_id) || !isPresentAttendance(record.estado_asistencia)) return;
+    attendantsByDay.get(record.dia)?.add(record.participant_id);
+    if (record.dia >= 6 && record.dia <= 10) ojtParticipantIds.add(record.participant_id);
+  });
+
+  const confirmedAltaIds = new Set(
+    confirmationRecords
+      .filter((confirmation) =>
+        participantIds.has(confirmation.participant_id) &&
+        confirmation.estado_alta === 'Alta confirmada' &&
+        ojtParticipantIds.has(confirmation.participant_id),
+      )
+      .map((confirmation) => confirmation.participant_id),
+  );
+  const d1Ids = attendantsByDay.get(1) || new Set<string>();
+  const d2Ids = attendantsByDay.get(2) || new Set<string>();
+  const d5Ids = attendantsByDay.get(5) || new Set<string>();
+  const d6Ids = attendantsByDay.get(6) || new Set<string>();
+  const d10Ids = attendantsByDay.get(10) || new Set<string>();
+  const desercionesFinales = Math.max(d2Ids.size - d10Ids.size, 0);
+
+  return {
+    d1Ids,
+    d2Ids,
+    d5Ids,
+    d6Ids,
+    d10Ids,
+    ojtParticipantIds,
+    confirmedAltaIds,
+    retencionCapacitacion: d2Ids.size > 0 ? Math.round((d5Ids.size / d2Ids.size) * 100) : 0,
+    retencionOjt: d6Ids.size > 0 ? Math.round((d10Ids.size / d6Ids.size) * 100) : 0,
+    desercionesFinales,
+    desercionFinalRate: d2Ids.size > 0 ? Math.round((desercionesFinales / d2Ids.size) * 100) : 0,
+  };
+};
+
 export default function Dashboard({
   sessions,
   participants,
@@ -86,6 +135,7 @@ export default function Dashboard({
   const [filterFechaFin, setFilterFechaFin] = useState<string>('');
   const [filterMes, setFilterMes] = useState<string>('');
   const [filterEstado, setFilterEstado] = useState<'todos' | TrainingTemporalStatus>('todos');
+  const [evidencePreview, setEvidencePreview] = useState<{ src: string; name: string } | null>(null);
 
   const roleScopedSessions = useMemo(() => {
     if (currentUser.rol === 'Formador') {
@@ -156,8 +206,6 @@ export default function Dashboard({
   }, [roleScopedSessions, filterCampaña, filterFormador, filterGeneracion, filterFechaInicio, filterFechaFin, filterMes, filterEstado]);
 
   const filteredSessionIds = useMemo(() => new Set(filteredSessions.map(s => s.id)), [filteredSessions]);
-  const filteredSessionById = useMemo(() => new Map(filteredSessions.map(s => [s.id, s])), [filteredSessions]);
-
   // Filtered Participants
   const filteredParticipants = useMemo(() => {
     return participants.filter(p => filteredSessionIds.has(p.training_session_id));
@@ -169,32 +217,6 @@ export default function Dashboard({
   const filteredAttendance = useMemo(() => {
     return attendance.filter(a => filteredParticipantIds.has(a.participant_id));
   }, [attendance, filteredParticipantIds]);
-
-  const visibleAttendanceDays = useMemo(() => {
-    if (filteredSessions.length === 0) return [];
-
-    const latestRecordedDay = filteredAttendance.reduce((latest, record) => {
-      const status = normalizeAttendanceStatus(record.estado_asistencia);
-      if (!status || status === 'pendiente' || status === 'seleccionar') return latest;
-      return Math.max(latest, record.dia);
-    }, 0);
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const latestReachedDay = filteredSessions.reduce((latest, session) => {
-      const startDate = new Date(`${session.fecha_inicio}T00:00:00`);
-      if (Number.isNaN(startDate.getTime()) || startDate > today) return latest;
-      const elapsedDays = Math.floor((today.getTime() - startDate.getTime()) / 86_400_000) + 1;
-      return Math.max(latest, Math.min(elapsedDays, getTrainingDaysCount(session)));
-    }, 0);
-
-    const maxConfiguredDays = Math.max(...filteredSessions.map((session) => getTrainingDaysCount(session)));
-    const visibleDaysCount = Math.min(
-      maxConfiguredDays,
-      Math.max(1, latestRecordedDay, latestReachedDay),
-    );
-    return Array.from({ length: visibleDaysCount }, (_, index) => index + 1);
-  }, [filteredSessions, filteredAttendance]);
 
   // Helper to filter out deleted altas
   const validConfirmations = useMemo(() => {
@@ -208,57 +230,15 @@ export default function Dashboard({
   // KPI Calculations
   const metrics = useMemo(() => {
     const totalCargados = filteredParticipants.length;
-
-    // Days attendance counts
-    const d1Attendants = new Set<string>();
-    const d2Attendants = new Set<string>();
-    const lastDayAttendants = new Set<string>();
-
-    filteredAttendance.forEach(a => {
-      if (isPresentAttendance(a.estado_asistencia)) {
-        if (a.dia === 1) d1Attendants.add(a.participant_id);
-        if (a.dia === 2) d2Attendants.add(a.participant_id);
-        const session = filteredSessionById.get(a.training_session_id);
-        if (session && a.dia === getTrainingDaysCount(session)) lastDayAttendants.add(a.participant_id);
-      }
-    });
-
-    const asistieronDia1 = d1Attendants.size;
-    const asistieronDia2 = d2Attendants.size;
-    const asistieronUltimoDia = lastDayAttendants.size;
-
-    const completaron = filteredParticipants.filter(p =>
-      p.estado_final === 'Completó capacitación' ||
-      p.estado_final === 'Pendiente de alta' ||
-      p.estado_final === 'Alta confirmada'
-    ).length;
-
-    const confirmedAltaParticipantIds = new Set(
-      filteredConfirmations
-        .filter(c => c.estado_alta === 'Alta confirmada')
-        .map(c => c.participant_id),
-    );
-    const altasConfirmadas = confirmedAltaParticipantIds.size;
-    const altasDesdeUltimoDia = Array.from(lastDayAttendants)
-      .filter((participantId) => confirmedAltaParticipantIds.has(participantId))
-      .length;
-    const altasDesdeDia2 = new Set(
-      filteredConfirmations
-        .filter(c => c.estado_alta === 'Alta confirmada' && d2Attendants.has(c.participant_id))
-        .map(c => c.participant_id),
-    ).size;
-    const desistidos = Math.max(asistieronDia2 - altasDesdeDia2, 0);
+    const phase = calculatePhaseMetrics(filteredParticipantIds, filteredAttendance, filteredConfirmations);
     const pendientesAlta = filteredParticipants.filter(p => p.estado_final === 'Pendiente de alta').length;
-
-    const aptos = filteredParticipants.filter(p => p.resultado_formacion === 'Apto').length;
-    const noAptos = filteredParticipants.filter(p => p.resultado_formacion === 'No apto').length;
+    const ojtParticipants = filteredParticipants.filter((participant) => phase.ojtParticipantIds.has(participant.id));
+    const aptos = ojtParticipants.filter(p => p.resultado_formacion === 'Apto').length;
+    const noAptos = ojtParticipants.filter(p => p.resultado_formacion === 'No apto').length;
     const totalConResultado = aptos + noAptos;
     const porcAptos = totalConResultado > 0 ? Math.round((aptos / totalConResultado) * 100) : 0;
 
-    const convocadosVsDia1 = totalCargados > 0 ? Math.round((asistieronDia1 / totalCargados) * 100) : 0;
-    const ultimoDiaVsDia1 = asistieronDia1 > 0 ? Math.round((asistieronUltimoDia / asistieronDia1) * 100) : 0;
-    const altasVsUltimoDia = asistieronUltimoDia > 0 ? Math.round((altasDesdeUltimoDia / asistieronUltimoDia) * 100) : 0;
-    const desercionRate = asistieronDia2 > 0 ? Math.round((desistidos / asistieronDia2) * 100) : 0;
+    const convocadosVsDia1 = totalCargados > 0 ? Math.round((phase.d1Ids.size / totalCargados) * 100) : 0;
 
     const reqPendientes = reopens.filter(r => r.estado === 'pendiente').length;
     const reqAprobadas = reopens.filter(r => r.estado === 'aprobada').length;
@@ -266,57 +246,43 @@ export default function Dashboard({
 
     return {
       totalCargados,
-      asistieronDia1,
-      asistieronDia2,
-      asistieronUltimoDia,
-      completaron,
-      desistidos,
-      altasConfirmadas,
-      altasDesdeUltimoDia,
+      asistieronDia1: phase.d1Ids.size,
+      asistieronDia2: phase.d2Ids.size,
+      asistieronDia5: phase.d5Ids.size,
+      asistieronDia6: phase.d6Ids.size,
+      asistieronDia10: phase.d10Ids.size,
+      desercionesFinales: phase.desercionesFinales,
+      altasConfirmadas: phase.confirmedAltaIds.size,
+      ojtParticipantIds: phase.ojtParticipantIds,
       pendientesAlta,
       aptos,
       noAptos,
       totalConResultado,
       porcAptos,
       convocadosVsDia1,
-      ultimoDiaVsDia1,
-      altasVsUltimoDia,
-      desercionRate,
+      retencionCapacitacion: phase.retencionCapacitacion,
+      retencionOjt: phase.retencionOjt,
+      desercionFinalRate: phase.desercionFinalRate,
       reqPendientes,
       reqAprobadas,
       reqRechazadas
     };
-  }, [filteredParticipants, filteredAttendance, filteredConfirmations, filteredSessionById, reopens]);
+  }, [filteredParticipants, filteredParticipantIds, filteredAttendance, filteredConfirmations, reopens]);
 
   // 1. Embudo (Funnel) Data
   const funnelData = useMemo(() => {
     const total = metrics.totalCargados;
 
-    // Calculate attendants per day
-    const dayAttendants = new Map<number, Set<string>>(
-      visibleAttendanceDays.map((day): [number, Set<string>] => [day, new Set<string>()]),
-    );
-    filteredAttendance.forEach(a => {
-      if (isPresentAttendance(a.estado_asistencia)) {
-        const session = filteredSessionById.get(a.training_session_id);
-        const sessionDays = getTrainingDaysCount(session);
-        if (a.dia >= 1 && a.dia <= sessionDays && dayAttendants.has(a.dia)) {
-          dayAttendants.get(a.dia)?.add(a.participant_id);
-        }
-      }
-    });
-
-    const colors = ['#3b82f6', '#06b6d4', '#14b8a6', '#10b981', '#84cc16', '#22c55e', '#0ea5e9', '#8b5cf6', '#a855f7', '#ec4899'];
     return [
       { name: 'Cargados', valor: total, fill: '#6366f1' },
-      ...visibleAttendanceDays.map((day, index) => ({
-        name: `Asist. Día ${day}`,
-        valor: dayAttendants.get(day)?.size || 0,
-        fill: colors[index] || '#3b82f6',
-      })),
+      { name: 'Asist. Día 1', valor: metrics.asistieronDia1, fill: '#3b82f6' },
+      { name: 'Inicio Cap. (D2)', valor: metrics.asistieronDia2, fill: '#06b6d4' },
+      { name: 'Cierre Cap. (D5)', valor: metrics.asistieronDia5, fill: '#10b981' },
+      { name: 'Inicio OJT (D6)', valor: metrics.asistieronDia6, fill: '#8b5cf6' },
+      { name: 'Cierre OJT (D10)', valor: metrics.asistieronDia10, fill: '#a855f7' },
       { name: 'Altas Conf.', valor: metrics.altasConfirmadas, fill: '#ec4899' },
     ];
-  }, [metrics, filteredAttendance, filteredSessionById, visibleAttendanceDays]);
+  }, [metrics]);
 
   // 2. Comparativo por Campaña
   const campañaData = useMemo(() => {
@@ -327,50 +293,18 @@ export default function Dashboard({
       const campParts = participants.filter(p => campSessionIds.has(p.training_session_id));
       const campPartIds = new Set(campParts.map(p => p.id));
 
-      const total = campParts.length;
-      const d1 = new Set();
-      const d2 = new Set();
-      const lastDay = new Set();
-      const desertionFromDay2 = new Set<string>();
-
-      attendance.forEach(a => {
-        if (campPartIds.has(a.participant_id) && isPresentAttendance(a.estado_asistencia)) {
-          const session = campSessions.find((item) => item.id === a.training_session_id);
-          if (a.dia === 1) d1.add(a.participant_id);
-          if (a.dia === 2) d2.add(a.participant_id);
-          if (session && a.dia === getTrainingDaysCount(session)) lastDay.add(a.participant_id);
-        }
-        if (campPartIds.has(a.participant_id) && a.dia >= 2 && isDesertionAttendance(a.estado_asistencia)) {
-          desertionFromDay2.add(a.participant_id);
-        }
-      });
-
-      const altas = validConfirmations.filter(c => campPartIds.has(c.participant_id) && c.estado_alta === 'Alta confirmada').length;
-      const noAltas = new Set(
-        validConfirmations
-          .filter(c => campPartIds.has(c.participant_id) && c.estado_alta === 'No alta')
-          .map(c => c.participant_id),
-      );
-      const desistidos = campParts.filter(p =>
-        d2.has(p.id) &&
-        (
-          desertionFromDay2.has(p.id) ||
-          noAltas.has(p.id) ||
-          isDesertionFinalState(p.estado_final)
-        )
-      ).length;
-      const retencion = d2.size > 0 ? Math.round((lastDay.size / d2.size) * 100) : 0;
-      const conversion = lastDay.size > 0 ? Math.round((altas / lastDay.size) * 100) : 0;
+      const phase = calculatePhaseMetrics(campPartIds, attendance, validConfirmations);
 
       return {
         name: camp,
-        Cargados: total,
-        'Asist. Día 1': d1.size,
-        'Asist. Día final': lastDay.size,
-        Desistidos: desistidos,
-        Altas: altas,
-        'Retención %': retencion,
-        'Conversión %': conversion
+        Cargados: campParts.length,
+        'Asist. Día 1': phase.d1Ids.size,
+        'Cierre Capacitación': phase.d5Ids.size,
+        'Cierre OJT': phase.d10Ids.size,
+        Altas: phase.confirmedAltaIds.size,
+        'Retención Capacitación %': phase.retencionCapacitacion,
+        'Retención OJT %': phase.retencionOjt,
+        'Deserción Final %': phase.desercionFinalRate,
       };
     });
   }, [filteredSessions, participants, attendance, validConfirmations, filterCampaña]);
@@ -383,85 +317,47 @@ export default function Dashboard({
       const tParts = participants.filter(p => sIds.has(p.training_session_id));
       const tPartIds = new Set(tParts.map(p => p.id));
 
-      const total = tParts.length;
-      const d1 = new Set<string>();
-      const d2 = new Set<string>();
-      const lastDay = new Set();
-      const desertionFromDay2 = new Set<string>();
-
-      attendance.forEach(a => {
-        if (tPartIds.has(a.participant_id) && isPresentAttendance(a.estado_asistencia)) {
-          const session = trainerSessions.find((item) => item.id === a.training_session_id);
-          if (a.dia === 1) d1.add(a.participant_id);
-          if (a.dia === 2) d2.add(a.participant_id);
-          if (session && a.dia === getTrainingDaysCount(session)) lastDay.add(a.participant_id);
-        }
-        if (tPartIds.has(a.participant_id) && a.dia >= 2 && isDesertionAttendance(a.estado_asistencia)) {
-          desertionFromDay2.add(a.participant_id);
-        }
-      });
-
-      const altas = validConfirmations.filter(c => tPartIds.has(c.participant_id) && c.estado_alta === 'Alta confirmada').length;
-      const noAltas = new Set(
-        validConfirmations
-          .filter(c => tPartIds.has(c.participant_id) && c.estado_alta === 'No alta')
-          .map(c => c.participant_id),
-      );
-      const desistidos = tParts.filter(p =>
-        d2.has(p.id) &&
-        (
-          desertionFromDay2.has(p.id) ||
-          noAltas.has(p.id) ||
-          isDesertionFinalState(p.estado_final)
-        )
-      ).length;
-      const efectividad = lastDay.size > 0 ? Math.round((altas / lastDay.size) * 100) : 0;
+      const phase = calculatePhaseMetrics(tPartIds, attendance, validConfirmations);
 
       return {
         name: t.nombre.split(' ')[0] + ' ' + (t.nombre.split(' ')[1] || ''), // Short name
-        Asignados: total,
-        Completados: lastDay.size,
-        Deserciones: desistidos,
-        Altas: altas,
-        'Efectividad %': efectividad
+        Asignados: tParts.length,
+        'Cierre Capacitación': phase.d5Ids.size,
+        'Cierre OJT': phase.d10Ids.size,
+        Altas: phase.confirmedAltaIds.size,
+        'Efectividad %': phase.retencionOjt,
       };
     });
   }, [filteredSessions, visibleTrainers, participants, attendance, validConfirmations]);
 
   // 4. Deserciones por Motivo
+  const desertionDetails = useMemo(() => {
+    const participantById = new Map(filteredParticipants.map((participant) => [participant.id, participant]));
+    const firstDesertionByParticipant = new Map<string, AttendanceRecord>();
+
+    [...filteredAttendance]
+      .sort((a, b) => a.dia - b.dia)
+      .forEach((record) => {
+        if (
+          record.dia >= 2 &&
+          record.dia <= 10 &&
+          isDesertionAttendance(record.estado_asistencia) &&
+          !firstDesertionByParticipant.has(record.participant_id)
+        ) {
+          firstDesertionByParticipant.set(record.participant_id, record);
+        }
+      });
+
+    return Array.from(firstDesertionByParticipant.values())
+      .map((record) => ({ record, participant: participantById.get(record.participant_id) }))
+      .filter((item) => item.participant)
+      .sort((a, b) => b.record.dia - a.record.dia);
+  }, [filteredAttendance, filteredParticipants]);
+
   const desercionesPorMotivo = useMemo(() => {
     const motivosCounts: { [key: string]: number } = {};
-    const attendedDay2 = new Set(
-      filteredAttendance
-        .filter(a => a.dia === 2 && isPresentAttendance(a.estado_asistencia))
-        .map(a => a.participant_id),
-    );
-    const motivoPorParticipante = new Map<string, string>();
-
-    filteredAttendance.forEach(a => {
-      if (a.dia >= 2 && isDesertionAttendance(a.estado_asistencia) && a.motivo_desercion && !motivoPorParticipante.has(a.participant_id)) {
-        motivoPorParticipante.set(a.participant_id, a.motivo_desercion);
-      }
-    });
-
-    const noAltaPorParticipante = new Map<string, string>();
-    filteredConfirmations.forEach((confirmation) => {
-      if (confirmation.estado_alta === 'No alta') {
-        noAltaPorParticipante.set(
-          confirmation.participant_id,
-          confirmation.motivo_no_alta || confirmation.observacion || 'No alta en operación',
-        );
-      }
-    });
-
-    filteredParticipants.forEach((participant) => {
-      if (!attendedDay2.has(participant.id)) return;
-      const motivo =
-        motivoPorParticipante.get(participant.id) ||
-        noAltaPorParticipante.get(participant.id) ||
-        (isDesertionFinalState(participant.estado_final) ? participant.motivo_desercion : '') ||
-        '';
-      if (!motivo) return;
+    desertionDetails.forEach(({ record }) => {
+      const motivo = record.motivo_desercion || 'Sin motivo especificado';
       motivosCounts[motivo] = (motivosCounts[motivo] || 0) + 1;
     });
 
@@ -472,7 +368,7 @@ export default function Dashboard({
       value: motivosCounts[motivo],
       color: colors[index % colors.length]
     })).sort((a, b) => b.value - a.value);
-  }, [filteredAttendance, filteredParticipants, filteredConfirmations]);
+  }, [desertionDetails]);
 
   const desercionesPorMotivoTotal = useMemo(
     () => desercionesPorMotivo.reduce((sum, item) => sum + item.value, 0),
@@ -485,6 +381,8 @@ export default function Dashboard({
       name: string;
       sortKey: number;
       Cargados: number;
+      'Cierre Capacitación': number;
+      'Cierre OJT': number;
       Altas: number;
     }>();
 
@@ -511,6 +409,8 @@ export default function Dashboard({
           name: week.name,
           sortKey: week.sortKey,
           Cargados: 0,
+          'Cierre Capacitación': 0,
+          'Cierre OJT': 0,
           Altas: 0,
         });
       }
@@ -521,35 +421,18 @@ export default function Dashboard({
       bucket.Cargados += participants.filter(
         (participant) => participant.training_session_id === session.id,
       ).length;
-    });
-
-    filteredConfirmations.forEach((confirmation) => {
-      if (confirmation.estado_alta !== 'Alta confirmada') return;
-
-      const participant = participants.find((item) => item.id === confirmation.participant_id);
-      const session = participant
-        ? filteredSessions.find((item) => item.id === participant.training_session_id)
-        : null;
-      const week = getWeekKey(confirmation.fecha_alta || session?.fecha_inicio || session?.fecha_creacion);
-      if (!week) return;
-
-      if (!weekBuckets.has(week.name)) {
-        weekBuckets.set(week.name, {
-          name: week.name,
-          sortKey: week.sortKey,
-          Cargados: 0,
-          Altas: 0,
-        });
-      }
-
-      const bucket = weekBuckets.get(week.name);
-      if (bucket) bucket.Altas += 1;
+      const sessionParts = participants.filter((participant) => participant.training_session_id === session.id);
+      const sessionPartIds = new Set(sessionParts.map((participant) => participant.id));
+      const phase = calculatePhaseMetrics(sessionPartIds, filteredAttendance, filteredConfirmations);
+      bucket['Cierre Capacitación'] += phase.d5Ids.size;
+      bucket['Cierre OJT'] += phase.d10Ids.size;
+      bucket.Altas += phase.confirmedAltaIds.size;
     });
 
     return Array.from(weekBuckets.values())
       .sort((a, b) => a.sortKey - b.sortKey)
       .map(({ sortKey: _sortKey, ...bucket }) => bucket);
-  }, [filteredSessions, participants, filteredConfirmations]);
+  }, [filteredSessions, participants, filteredAttendance, filteredConfirmations]);
 
   return (
     <div className="space-y-6" id="dashboard-container">
@@ -694,7 +577,7 @@ export default function Dashboard({
       {/* KPI Cards Grid */}
       {!filterMes && (
       <>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="kpi-grid">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4" id="kpi-grid">
         {/* Card 1 */}
         <div className="glass-card glass-card-hover rounded-2xl p-5 relative overflow-hidden">
           <div className="absolute inset-x-0 top-0 h-1 bg-indigo-500"></div>
@@ -715,10 +598,10 @@ export default function Dashboard({
           <div className="absolute inset-x-0 top-0 h-1 bg-cyan-500"></div>
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-slate-400 font-medium text-xs uppercase tracking-wider">Día final / Día 1</p>
-              <h3 className="text-slate-900 text-3xl font-black mt-1">{metrics.ultimoDiaVsDia1}%</h3>
+              <p className="text-slate-400 font-medium text-xs uppercase tracking-wider">Retención Capacitación</p>
+              <h3 className="text-slate-900 text-3xl font-black mt-1">{metrics.retencionCapacitacion}%</h3>
               <p className="text-xs text-emerald-600 font-medium mt-1">
-                {metrics.asistieronUltimoDia} de {metrics.asistieronDia1} llegaron al último día
+                {metrics.asistieronDia5} de {metrics.asistieronDia2} llegaron al Día 5
               </p>
             </div>
             <div className="bg-cyan-50 rounded-xl p-2.5 text-cyan-600 border border-cyan-100">
@@ -732,10 +615,10 @@ export default function Dashboard({
           <div className="absolute inset-x-0 top-0 h-1 bg-fuchsia-500"></div>
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-slate-400 font-medium text-xs uppercase tracking-wider">Altas / Día final</p>
-              <h3 className="text-slate-900 text-3xl font-black mt-1">{metrics.altasVsUltimoDia}%</h3>
+              <p className="text-slate-400 font-medium text-xs uppercase tracking-wider">Retención OJT</p>
+              <h3 className="text-slate-900 text-3xl font-black mt-1">{metrics.retencionOjt}%</h3>
               <p className="text-xs text-fuchsia-600 font-medium mt-1">
-                {metrics.altasDesdeUltimoDia} de {metrics.asistieronUltimoDia} con alta confirmada
+                {metrics.asistieronDia10} de {metrics.asistieronDia6} llegaron al Día 10
               </p>
             </div>
             <div className="bg-fuchsia-50 rounded-xl p-2.5 text-fuchsia-600 border border-fuchsia-100">
@@ -749,14 +632,29 @@ export default function Dashboard({
           <div className="absolute inset-x-0 top-0 h-1 bg-rose-500"></div>
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-slate-400 font-medium text-xs uppercase tracking-wider">Deserción Día 2 - Alta Día 5</p>
-              <h3 className="text-slate-900 text-3xl font-black mt-1">{metrics.desercionRate}%</h3>
+              <p className="text-slate-400 font-medium text-xs uppercase tracking-wider">Deserción Final</p>
+              <h3 className="text-slate-900 text-3xl font-black mt-1">{metrics.desercionFinalRate}%</h3>
               <p className="text-xs text-rose-500 font-medium mt-1">
-                {metrics.desistidos} de {metrics.asistieronDia2} no llegaron al alta del Día 5
+                {metrics.desercionesFinales} de {metrics.asistieronDia2} no llegaron al Día 10
               </p>
             </div>
             <div className="bg-rose-50 rounded-xl p-2.5 text-rose-600 border border-rose-100">
               <UserX className="w-5 h-5" />
+            </div>
+          </div>
+        </div>
+
+        {/* Card 5 */}
+        <div className="glass-card glass-card-hover rounded-2xl p-5 relative overflow-hidden">
+          <div className="absolute inset-x-0 top-0 h-1 bg-emerald-500"></div>
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-slate-400 font-medium text-xs uppercase tracking-wider">Altas</p>
+              <h3 className="text-slate-900 text-3xl font-black mt-1">{metrics.altasConfirmadas}</h3>
+              <p className="text-xs text-emerald-600 font-medium mt-1">Participaron en OJT y tienen alta confirmada</p>
+            </div>
+            <div className="bg-emerald-50 rounded-xl p-2.5 text-emerald-600 border border-emerald-100">
+              <UserCheck className="w-5 h-5" />
             </div>
           </div>
         </div>
@@ -835,7 +733,8 @@ export default function Dashboard({
                 <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
                 <Bar dataKey="Cargados" fill="#818cf8" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="Asist. Día 1" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Asist. Día final" fill="#10b981" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Cierre Capacitación" fill="#10b981" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Cierre OJT" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="Altas" fill="#ec4899" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -844,7 +743,7 @@ export default function Dashboard({
             {campañaData.map(c => (
               <div key={c.name} className="text-center">
                 <p className="text-[10px] text-slate-500 font-semibold uppercase truncate">{c.name}</p>
-                <p className="text-xs font-bold text-slate-700">Conv: {c['Conversión %']}%</p>
+                <p className="text-xs font-bold text-slate-700">OJT: {c['Retención OJT %']}%</p>
               </div>
             ))}
           </div>
@@ -873,7 +772,8 @@ export default function Dashboard({
                 />
                 <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
                 <Bar dataKey="Asignados" fill="#a78bfa" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Completados" fill="#34d399" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Cierre Capacitación" fill="#34d399" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Cierre OJT" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="Altas" fill="#f43f5e" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -890,12 +790,12 @@ export default function Dashboard({
               <UserX className="text-rose-500 w-4.5 h-4.5" />
               Deserciones por Motivo
             </h3>
-            <span className="text-slate-400 text-xs font-mono">Día 2 a alta</span>
+            <span className="text-slate-400 text-xs font-mono">Día 2 a Día 10</span>
           </div>
           <div className="flex-1 min-h-[220px] flex items-center justify-center">
             {desercionesPorMotivo.length === 0 ? (
               <div className="text-center text-slate-400 py-10">
-                <p className="text-sm">No se registran deserciones desde Día 2 hasta alta en este período</p>
+                <p className="text-sm">No se registran deserciones entre el Día 2 y el Día 10</p>
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={220}>
@@ -1000,44 +900,57 @@ export default function Dashboard({
           )}
         </div>
 
-        {/* Novedades y Comentarios de Aptitud (Aptos / No aptos) */}
+        {/* Motivos y comentarios de baja/deserción */}
         <div className="glass-card flex flex-col p-5 rounded-2xl lg:col-span-2">
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-slate-800 font-bold text-base flex items-center gap-1.5">
               <Users className="text-indigo-600 w-4.5 h-4.5" />
-              Detalle de Novedades de Calificación
+              Detalle de Motivos de Deserción
             </h3>
             <span className="text-slate-400 text-xs font-mono">Comentarios</span>
           </div>
           
           <div className="flex-1 max-h-[280px] overflow-y-auto space-y-3 pr-1">
             {(() => {
-              const ratedParts = filteredParticipants.filter(p => p.resultado_formacion === 'Apto' || p.resultado_formacion === 'No apto');
-              if (ratedParts.length === 0) {
+              if (desertionDetails.length === 0) {
                 return (
                   <div className="flex flex-col items-center justify-center text-slate-400 h-full py-16">
-                    <p className="text-sm">Sin comentarios de aptitud recientes</p>
-                    <p className="text-[11px] text-slate-400 mt-0.5">Las justificaciones de Aptitud/No aptitud se verán aquí</p>
+                    <p className="text-sm">Sin motivos de deserción registrados</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">Los comentarios ingresados por los formadores se verán aquí</p>
                   </div>
                 );
               }
-              return ratedParts.map(p => {
-                const isApto = p.resultado_formacion === 'Apto';
+              return desertionDetails.map(({ participant, record }) => {
+                if (!participant) return null;
                 return (
-                  <div key={p.id} className="p-3 bg-slate-50 border border-slate-100 rounded-xl space-y-1">
+                  <div key={participant.id} className="p-3 bg-slate-50 border border-slate-100 rounded-xl space-y-1">
                     <div className="flex justify-between items-start">
                       <div>
-                        <h4 className="font-bold text-xs text-slate-800">{p.nombres} {p.apellidos}</h4>
-                        <p className="text-[10px] text-slate-400 font-medium">DNI: {p.dni}</p>
+                        <h4 className="font-bold text-xs text-slate-800">{participant.nombres} {participant.apellidos}</h4>
+                        <p className="text-[10px] text-slate-400 font-medium">DNI: {participant.dni} · Día {record.dia}</p>
                       </div>
-                      <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${
-                        isApto ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-                      }`}>
-                        {p.resultado_formacion}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded-full font-bold text-[10px] bg-rose-100 text-rose-800">
+                          {record.motivo_desercion || record.estado_asistencia}
+                        </span>
+                        {record.evidencia_imagen && (
+                          <button
+                            type="button"
+                            onClick={() => setEvidencePreview({
+                              src: record.evidencia_imagen || '',
+                              name: record.evidencia_nombre || 'Evidencia de deserción',
+                            })}
+                            className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50"
+                            title="Visualizar evidencia"
+                            aria-label="Visualizar evidencia"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <p className="text-xs text-slate-600 leading-relaxed italic">
-                      "{isApto ? p.comentario_aptitud : p.motivo_no_apt}"
+                      &quot;{record.observacion || 'Sin comentario adicional.'}&quot;
                     </p>
                   </div>
                 );
@@ -1082,12 +995,41 @@ export default function Dashboard({
                 <Tooltip contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px' }} />
                 <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
                 <Area type="monotone" dataKey="Cargados" stroke="#6366f1" strokeWidth={2} fillOpacity={1} fill="url(#colorCargados)" />
+                <Area type="monotone" dataKey="Cierre Capacitación" stroke="#10b981" strokeWidth={2} fillOpacity={0} />
+                <Area type="monotone" dataKey="Cierre OJT" stroke="#8b5cf6" strokeWidth={2} fillOpacity={0} />
                 <Area type="monotone" dataKey="Altas" stroke="#ec4899" strokeWidth={2} fillOpacity={1} fill="url(#colorAltas)" />
               </AreaChart>
             </ResponsiveContainer>
           )}
         </div>
+
       </div>
+
+      {evidencePreview && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <div className="bg-white rounded-2xl p-4 max-w-3xl w-full border border-white/40 shadow-xl space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="font-bold text-sm text-slate-800 truncate">{evidencePreview.name}</h3>
+              <button type="button" onClick={() => setEvidencePreview(null)} className="p-2 rounded-lg text-slate-500 hover:bg-slate-100" title="Cerrar">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="max-h-[70vh] overflow-auto rounded-xl bg-slate-50 border border-slate-100 p-2">
+              {evidencePreview.src.startsWith('data:image/') ? (
+                <img src={evidencePreview.src} alt={evidencePreview.name} className="mx-auto max-h-[66vh] w-auto max-w-full rounded-lg object-contain" />
+              ) : evidencePreview.src.startsWith('data:application/pdf') ? (
+                <iframe src={evidencePreview.src} title={evidencePreview.name} className="h-[66vh] w-full rounded-lg" />
+              ) : (
+                <div className="flex min-h-48 flex-col items-center justify-center gap-3 text-center">
+                  <FileUp className="h-10 w-10 text-indigo-500" />
+                  <p className="text-sm font-semibold text-slate-700">Este documento está listo para descargar.</p>
+                  <a href={evidencePreview.src} download={evidencePreview.name} className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700">Descargar documento</a>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       </>
       )}
     </div>

@@ -11,6 +11,27 @@ const router = Router();
 const surveyStatusSchema = z.enum(['Borrador', 'Habilitada', 'Deshabilitada', 'Cerrada', 'Eliminada']);
 
 router.patch(
+  '/:surveyId/link-assignments',
+  requireAuth,
+  requireRole(['Administrador']),
+  async (req: AuthenticatedRequest, res: Response) => {
+    const parsed = z.object({ userIds: z.array(z.string().min(1)) }).safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ message: 'La lista de usuarios asignados es invalida.' });
+      return;
+    }
+    const surveyRef = adminDb.collection('surveys').doc(req.params.surveyId);
+    const surveyDoc = await surveyRef.get();
+    if (!surveyDoc.exists) {
+      res.status(404).json({ message: 'Encuesta no encontrada.' });
+      return;
+    }
+    await surveyRef.set({ link_assigned_user_ids: Array.from(new Set(parsed.data.userIds)) }, { merge: true });
+    res.json({ ok: true });
+  },
+);
+
+router.patch(
   '/:surveyId/status',
   requireAuth,
   requireRole(['Administrador', 'Analista', 'Reclutador', 'Coordinador']),
@@ -22,6 +43,17 @@ router.patch(
     if (!parsed.success) {
       res.status(400).json({ message: 'Estado de encuesta invalido.' });
       return;
+    }
+    const requestedAssignments = parsed.data.changes?.link_assigned_user_ids;
+    if (requestedAssignments !== undefined) {
+      if (req.user!.rol !== 'Administrador') {
+        res.status(403).json({ message: 'Solo el Administrador puede asignar enlaces de encuestas.' });
+        return;
+      }
+      if (!Array.isArray(requestedAssignments) || requestedAssignments.some((id) => typeof id !== 'string')) {
+        res.status(400).json({ message: 'La lista de usuarios asignados es invalida.' });
+        return;
+      }
     }
 
     const surveyRef = adminDb.collection('surveys').doc(req.params.surveyId);

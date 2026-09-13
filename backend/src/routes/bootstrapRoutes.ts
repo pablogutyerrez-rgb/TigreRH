@@ -58,7 +58,21 @@ const readStringField = (data: Record<string, unknown> | undefined, keys: string
 
 const isAssignedTrainer = (session: Record<string, unknown>, userId: string) =>
   session.formador_id === userId ||
-  (Array.isArray(session.formador_ids) && session.formador_ids.includes(userId));
+  [
+    session.formador_ids,
+    session.formador_capacitacion_inicial_ids,
+    session.formador_ojt_ids,
+  ].some((ids) => Array.isArray(ids) && ids.includes(userId));
+
+const canAccessSurveyLink = (
+  survey: Record<string, unknown>,
+  session: Record<string, unknown> | undefined,
+  userId: string,
+  role: string,
+) =>
+  role === 'Administrador' ||
+  (Array.isArray(survey.link_assigned_user_ids) && survey.link_assigned_user_ids.includes(userId)) ||
+  Boolean(session && isAssignedTrainer(session, userId));
 
 router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -107,12 +121,29 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
     const participantIds = new Set(
       participants.map((participant) => String(participant.id)),
     );
-    const surveys = allSurveys.filter((survey) =>
+    const scopedSurveys = allSurveys.filter((survey) =>
       sessionIds.has(String(survey.training_session_id)),
     );
-    const surveyIds = new Set(surveys.map((survey) => String(survey.id)));
     const surveysById = new Map(allSurveys.map((survey) => [String(survey.id), survey]));
     const sessionsById = new Map(allSessions.map((session) => [String(session.id), session]));
+    const assignedSurveyIds = new Set(
+      allSurveys
+        .filter((survey) =>
+          Array.isArray(survey.link_assigned_user_ids) && survey.link_assigned_user_ids.includes(user.uid),
+        )
+        .map((survey) => String(survey.id)),
+    );
+    const surveys = allSurveys
+      .filter((survey) =>
+        sessionIds.has(String(survey.training_session_id)) || assignedSurveyIds.has(String(survey.id)),
+      )
+      .map((survey) => {
+        const session = sessionsById.get(String(survey.training_session_id));
+        return canAccessSurveyLink(survey, session, user.uid, user.rol)
+          ? survey
+          : { ...survey, token: '' };
+      });
+    const responseSurveyIds = new Set(scopedSurveys.map((survey) => String(survey.id)));
     const normalizedResponses: Array<Record<string, unknown>> = allResponses.map((response) => {
       const survey = surveysById.get(String(response.training_survey_id || ''));
       const session = sessionsById.get(String(survey?.training_session_id || ''));
@@ -172,7 +203,7 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
         : [],
       surveys,
       responses: normalizedResponses.filter((response) =>
-        surveyIds.has(String(response.training_survey_id)),
+        responseSurveyIds.has(String(response.training_survey_id)),
       ),
     });
   } catch (error) {

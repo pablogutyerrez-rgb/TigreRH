@@ -95,7 +95,7 @@ import {
   persistParticipant,
   persistReopenRequest,
 } from './services/operationService';
-import { updateSurveyStatusRemote } from './services/surveyService';
+import { updateSurveyLinkAssignmentsRemote, updateSurveyStatusRemote } from './services/surveyService';
 import { APP_NAME } from './constants/app';
 import loginBackgroundVideo from './assets/login-background.mp4';
 import { CURRENT_TRAINING_DAYS_COUNT, getTrainingDays, getTrainingDaysCount } from './utils/trainingDays';
@@ -1065,6 +1065,25 @@ export default function App() {
       registrado_por: activeUser?.id || record.registrado_por,
       fecha_registro: new Date().toISOString(),
     };
+  };
+
+  const handleUpdateSurveyAssignments = (surveyId: string, userIds: string[]) => {
+    setSurveys(prev => prev.map(survey => {
+      if (survey.id !== surveyId) return survey;
+      const updated = { ...survey, link_assigned_user_ids: userIds };
+      void updateSurveyLinkAssignmentsRemote(surveyId, userIds).catch((error) => {
+        console.error('Error persisting survey link assignments:', error);
+        alert(error instanceof Error ? error.message : 'No se pudieron guardar las asignaciones del enlace.');
+      });
+      addAuditLog(
+        'Asignaciones de enlace actualizadas',
+        'Encuestas de Satisfacción',
+        `Se actualizaron ${userIds.length} asignaciones para la encuesta "${survey.codigo_generacion}".`,
+        survey.campaña,
+        survey.codigo_generacion,
+      );
+      return updated;
+    }));
   };
 
   const getTrainingDayDate = (session: TrainingSession | undefined, day: number) => {
@@ -2530,9 +2549,11 @@ export default function App() {
                   sessions={sessions}
                   participants={participants}
                   attendance={attendance}
+                  users={users}
                   currentUser={activeUser}
                   onUpdateSurveyStatus={handleUpdateSurveyStatus}
                   onAddSurvey={handleAddSurvey}
+                  onUpdateSurveyAssignments={handleUpdateSurveyAssignments}
                   onAuditLog={addAuditLog}
                   onOpenPublicSurvey={handleOpenPublicSurvey}
                 />

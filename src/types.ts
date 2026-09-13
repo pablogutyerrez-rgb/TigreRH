@@ -294,6 +294,7 @@ export interface TrainingSurvey {
   formador_nombre: string;
   estado: SurveyStatus;
   token: string;
+  link_assigned_user_ids?: string[];
   fecha_habilitacion?: string;
   fecha_cierre?: string;
   
