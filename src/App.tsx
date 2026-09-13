@@ -643,10 +643,10 @@ export default function App() {
   // --- Actions & Database Updates ---
 
   // 1. Create Training Session
-  const handleAddSession = (
+  const handleAddSession = async (
     newSess: Omit<TrainingSession, 'id' | 'fecha_creacion' | 'formador_nombre' | 'reclutador_nombre'>,
     uploadedParticipants: Omit<Participant, 'id'>[]
-  ) => {
+  ): Promise<void> => {
     const sId = `s-${Math.random().toString(36).substring(2, 11)}`;
     const fUser = users.find(u => u.id === newSess.formador_id);
     const rUser = users.find(u => u.id === newSess.reclutador_id) || activeUser;
@@ -664,9 +664,6 @@ export default function App() {
       fecha_creacion: new Date().toISOString()
     };
 
-    // Add session
-    setSessions(prev => [sessionObj, ...prev]);
-
     // Automatically create survey template
     const genCode = sessionObj.generation_code;
     const surveyObj: TrainingSurvey = {
@@ -679,8 +676,6 @@ export default function App() {
       estado: 'Deshabilitada',
       token: genCode.trim().replace(/\s+/g, '-')
     };
-    setSurveys(prev => [surveyObj, ...prev]);
-
     // Add its participants
     const partsWithId = uploadedParticipants.map((p, idx) => {
       // Determine initial estado_final if pre-calculated
@@ -691,8 +686,6 @@ export default function App() {
         estado_final: p.estado_final || 'Pendiente de gestión'
       };
     });
-
-    setParticipants(prev => [...prev, ...partsWithId]);
 
     // Automatically prepare attendance records for each required day with imported states or 'Seleccionar'
     const initialAttendanceRecords: AttendanceRecord[] = [];
@@ -728,16 +721,17 @@ export default function App() {
       }
     });
 
-    setAttendance(prev => [...prev, ...initialAttendanceRecords]);
-    void createTrainingBundle(
+    await createTrainingBundle(
       sessionObj,
       surveyObj,
       partsWithId,
       initialAttendanceRecords,
-    ).catch((error) => {
-      console.error('Error persisting training:', error);
-      alert(error instanceof Error ? error.message : 'No se pudo guardar la capacitación.');
-    });
+    );
+
+    setSessions(prev => [sessionObj, ...prev]);
+    setSurveys(prev => [surveyObj, ...prev]);
+    setParticipants(prev => [...prev, ...partsWithId]);
+    setAttendance(prev => [...prev, ...initialAttendanceRecords]);
 
     // Register automatic code generation audit log
     if (sessionObj.generation_code) {

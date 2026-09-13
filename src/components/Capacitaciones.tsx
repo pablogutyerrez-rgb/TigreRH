@@ -47,7 +47,7 @@ interface CapacitacionesProps {
   currentUser: AppUser;
   trainers: AppUser[];
   recruiters: AppUser[];
-  onAddSession: (newSession: Omit<TrainingSession, 'id' | 'fecha_creacion' | 'formador_nombre' | 'reclutador_nombre'>, uploadedParticipants: Omit<Participant, 'id'>[]) => void;
+  onAddSession: (newSession: Omit<TrainingSession, 'id' | 'fecha_creacion' | 'formador_nombre' | 'reclutador_nombre'>, uploadedParticipants: Omit<Participant, 'id'>[]) => Promise<void>;
   onDeleteSession: (sessionId: string) => void;
   onViewAttendance: (sessionId: string) => void;
   onCloseCampaign?: (sessionId: string) => void;
@@ -153,6 +153,7 @@ export default function Capacitaciones({
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCampaña, setFilterCampaña] = useState('todos');
   const [filterEstado, setFilterEstado] = useState('todos');
+  const [isSavingTraining, setIsSavingTraining] = useState(false);
 
   // Form State
   const [fechaInicio, setFechaInicio] = useState('2026-07-02');
@@ -1224,7 +1225,8 @@ export default function Capacitaciones({
   };
 
   // Confirm and Save Training Session & Participants
-  const handleSaveCapacitacion = () => {
+  const handleSaveCapacitacion = async () => {
+    if (isSavingTraining) return;
     const trainingIdentifier = generationCode.trim();
 
     if (!trainingIdentifier) {
@@ -1250,8 +1252,9 @@ export default function Capacitaciones({
       return;
     }
 
-    onAddSession(
-      {
+    setIsSavingTraining(true);
+    try {
+      await onAddSession({
         nombre_generacion: trainingIdentifier,
         campaña,
         tipo_capacitacion: tipoCapacitacion,
@@ -1271,11 +1274,16 @@ export default function Capacitaciones({
         observaciones,
         estado: 'En curso', // Begins in course once created & populated
         generation_code: trainingIdentifier
-      },
-      validatedParticipants
-    );
+      }, validatedParticipants);
+    } catch (error) {
+      console.error('Error persisting training:', error);
+      alert(error instanceof Error ? error.message : 'No se pudo guardar la capacitación. Los datos permanecen en el formulario para reintentar.');
+      return;
+    } finally {
+      setIsSavingTraining(false);
+    }
 
-    // Reset Form
+    // Reset only after PostgreSQL confirms the complete transaction.
     setView('list');
     setRawText('');
     setUploadedFileName('');
@@ -2178,15 +2186,15 @@ export default function Capacitaciones({
                       <button
                         type="button"
                         onClick={handleSaveCapacitacion}
-                        disabled={validatedParticipants.length === 0}
+                        disabled={validatedParticipants.length === 0 || isSavingTraining}
                         className={`w-full sm:w-auto font-bold text-xs rounded-xl px-6 py-3 shadow-md flex items-center justify-center gap-2 transform active:scale-95 transition-all cursor-pointer ${
-                          validatedParticipants.length === 0 
+                          validatedParticipants.length === 0 || isSavingTraining
                             ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' 
                             : 'bg-linear-to-r from-fuchsia-600 via-purple-600 to-indigo-600 hover:from-fuchsia-700 hover:to-indigo-700 text-white'
                         }`}
                       >
                         <CheckCircle className="w-5 h-5" />
-                        Confirmar carga y asignar capacitación
+                        {isSavingTraining ? 'Guardando en PostgreSQL...' : 'Confirmar carga y asignar capacitación'}
                       </button>
                     </div>
                   </div>
