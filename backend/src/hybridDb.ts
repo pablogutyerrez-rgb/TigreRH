@@ -346,26 +346,98 @@ class HybridCollectionReference extends HybridQuery {
   }
 }
 
+type BulkOperation =
+  | { kind: 'set'; ref: HybridDocumentReference; data: Data; merge: boolean }
+  | { kind: 'delete'; ref: HybridDocumentReference };
+
+const BULK_WRITE_BATCH_SIZE = 1000;
+
+const writeDocumentBatch = async (
+  client: QueryClient,
+  operations: Array<Extract<BulkOperation, { kind: 'set' }>>,
+) => {
+  if (operations.length === 0) return;
+  await ensureHybridSchema();
+  const uniqueRows = new Map<string, {
+    collection_name: string;
+    document_id: string;
+    payload: Data;
+  }>();
+  operations.forEach(({ ref, data }) => {
+    uniqueRows.set(`${ref.collectionName}\u0000${ref.id}`, {
+      collection_name: ref.collectionName,
+      document_id: ref.id,
+      payload: cleanData(data),
+    });
+  });
+  const rows = [...uniqueRows.values()];
+  await client.query(
+    `WITH input AS (
+       SELECT collection_name, document_id, payload
+       FROM jsonb_to_recordset($1::jsonb)
+         AS item(collection_name TEXT, document_id TEXT, payload JSONB)
+     )
+     INSERT INTO tigre_rh.current_documents (
+       collection_name, document_id, document_path, payload, source_payload,
+       is_deleted, created_at, updated_at
+     )
+     SELECT
+       collection_name, document_id, collection_name || '/' || document_id,
+       payload, payload, FALSE, NOW(), NOW()
+     FROM input
+     ON CONFLICT (collection_name, document_id) DO UPDATE SET
+       payload = EXCLUDED.payload,
+       source_payload = EXCLUDED.source_payload,
+       document_path = EXCLUDED.document_path,
+       source_hash = NULL,
+       is_deleted = FALSE,
+       updated_at = NOW()`,
+    [JSON.stringify(rows)],
+  );
+  new Set(operations.map(({ ref }) => ref.collectionName)).forEach(markCollectionChanged);
+};
+
 class HybridBulkWriter {
-  private readonly operations: Array<(client: QueryClient) => Promise<void>> = [];
+  private readonly operations: BulkOperation[] = [];
 
   set(ref: HybridDocumentReference, data: Data, options?: { merge?: boolean }) {
-    this.operations.push(async (client) => {
-      await writeDocumentData(ref.collectionName, ref.id, data, Boolean(options?.merge), client);
-    });
+    this.operations.push({ kind: 'set', ref, data, merge: Boolean(options?.merge) });
   }
 
   delete(ref: HybridDocumentReference) {
-    this.operations.push(async (client) => {
-      await deleteDocumentData(ref.collectionName, ref.id, client);
-    });
+    this.operations.push({ kind: 'delete', ref });
   }
 
   async close() {
     const client = await getPostgresPool().connect();
     try {
       await client.query('BEGIN');
-      for (const operation of this.operations) await operation(client);
+      for (let index = 0; index < this.operations.length;) {
+        const operation = this.operations[index];
+        if (operation.kind === 'set' && !operation.merge) {
+          const batch: Array<Extract<BulkOperation, { kind: 'set' }>> = [];
+          while (index < this.operations.length && batch.length < BULK_WRITE_BATCH_SIZE) {
+            const candidate = this.operations[index];
+            if (candidate.kind !== 'set' || candidate.merge) break;
+            batch.push(candidate);
+            index += 1;
+          }
+          await writeDocumentBatch(client, batch);
+          continue;
+        }
+        if (operation.kind === 'set') {
+          await writeDocumentData(
+            operation.ref.collectionName,
+            operation.ref.id,
+            operation.data,
+            true,
+            client,
+          );
+        } else {
+          await deleteDocumentData(operation.ref.collectionName, operation.ref.id, client);
+        }
+        index += 1;
+      }
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');

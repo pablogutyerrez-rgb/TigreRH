@@ -63,11 +63,6 @@ router.post('/', canManageTraining, async (req: AuthenticatedRequest, res: Respo
     return;
   }
 
-  if (req.user!.rol === 'Reclutador') {
-    session.reclutador_id = req.user!.uid;
-    session.reclutador_nombre = req.user!.nombre;
-  }
-
   const writer = adminDb.bulkWriter();
   writer.set(adminDb.collection('sessions').doc(session.id), session);
   writer.set(adminDb.collection('surveys').doc(survey.id), survey);

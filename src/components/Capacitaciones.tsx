@@ -163,7 +163,7 @@ export default function Capacitaciones({
   const [formadorInicialIds, setFormadorInicialIds] = useState<string[]>([]);
   const [formadorOjtIds, setFormadorOjtIds] = useState<string[]>([]);
   const [reclutadorId, setReclutadorId] = useState(
-    currentUser.rol === 'Reclutador' ? currentUser.id : '',
+    ['Reclutador', 'Analista'].includes(currentUser.rol) ? currentUser.id : '',
   );
   const [modalidad, setModalidad] = useState<'Presencial' | 'Virtual' | 'Híbrida'>('Presencial');
   const [turno, setTurno] = useState<'Part time' | 'Full time' | 'Mini full'>('Full time');
@@ -547,11 +547,9 @@ export default function Capacitaciones({
   }, [trainers, formadorInicialIds.length]);
 
   React.useEffect(() => {
-    if (currentUser.rol === 'Reclutador') {
-      setReclutadorId(currentUser.id);
-    } else if (!reclutadorId && recruiters.length > 0) {
-      setReclutadorId(recruiters[0].id);
-    }
+    if (reclutadorId || recruiters.length === 0) return;
+    const currentResponsible = recruiters.find((user) => user.id === currentUser.id);
+    setReclutadorId(currentResponsible?.id || recruiters[0].id);
   }, [currentUser, recruiters, reclutadorId]);
 
   // Handle manual generation name trigger
@@ -1726,25 +1724,18 @@ export default function Capacitaciones({
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Responsable de Carga (Reclutador)</label>
-                  {currentUser.rol === 'Reclutador' ? (
-                    <input
-                      type="text"
-                      disabled
-                      value={currentUser.nombre}
-                      className="w-full text-sm bg-slate-100 text-slate-500 rounded-xl border border-slate-200 p-2.5 cursor-not-allowed outline-hidden"
-                    />
-                  ) : (
-                    <select
-                      value={reclutadorId}
-                      onChange={(event) => setReclutadorId(event.target.value)}
-                      className="w-full text-sm bg-slate-50 text-slate-700 rounded-xl border border-slate-200 p-2.5"
-                    >
-                      <option value="">Selecciona un reclutador</option>
-                      {recruiters.map((recruiter) => (
-                        <option key={recruiter.id} value={recruiter.id}>{recruiter.nombre}</option>
-                      ))}
-                    </select>
-                  )}
+                  <select
+                    value={reclutadorId}
+                    onChange={(event) => setReclutadorId(event.target.value)}
+                    className="w-full text-sm bg-slate-50 text-slate-700 rounded-xl border border-slate-200 p-2.5"
+                  >
+                    <option value="">Selecciona un reclutador o analista</option>
+                    {recruiters.map((recruiter) => (
+                      <option key={recruiter.id} value={recruiter.id}>
+                        {recruiter.nombre}{recruiter.rol === 'Analista' ? ' (Analista)' : ''}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 

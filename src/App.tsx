@@ -1959,7 +1959,9 @@ export default function App() {
 
   // Extract list of unique trainers and recruiters
   const trainersList = users.filter(u => u.rol === 'Formador' && u.estado === 'Activo');
-  const recruitersList = users.filter(u => u.rol === 'Reclutador' && u.estado === 'Activo');
+  const recruitersList = users.filter(
+    u => ['Reclutador', 'Analista'].includes(u.rol) && u.estado === 'Activo',
+  );
 
   // --- Public Satisfaction Survey Router Render Interceptor ---
   if (urlView === 'survey') {
