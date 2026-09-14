@@ -147,7 +147,11 @@ const userHasAreaAccess = (user: User, area: UserArea) => {
 
 const userHasModuleAccess = (user: User, area: UserArea, moduleId: string) => {
   if (!userHasAreaAccess(user, area)) return false;
-  if (user.rol === 'Analista' && area === 'formacion' && moduleId === 'asistencia') return true;
+  if (
+    ['Analista', 'Coordinador', 'Reclutador'].includes(user.rol) &&
+    area === 'formacion' &&
+    moduleId === 'asistencia'
+  ) return true;
   if (userHasExplicitModuleAccess(user, area, moduleId)) return true;
   if (user.module_access && user.module_access.length > 0) return false;
   if (area === 'formacion' && moduleId === 'variables') return user.rol === 'Administrador';
