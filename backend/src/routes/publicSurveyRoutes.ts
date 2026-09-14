@@ -9,14 +9,7 @@ const dniSchema = z.string().trim().regex(/^\d{8,15}$/);
 const PRESENT_ATTENDANCE = new Set(['Asistio', 'Asisti�', 'Asistió', 'Tardanza']);
 const DROPOUT_ATTENDANCE = new Set(['Desisti�', 'Desistió', 'Baja']);
 const DROPOUT_FINAL_STATES = new Set(['Desisti�', 'Desistió', 'No asisti�', 'No asistió']);
-const SURVEY_READY_FINAL_STATES = new Set([
-  'Complet� capacitaci�n',
-  'Completó capacitación',
-  'Pendiente de alta',
-  'Alta confirmada',
-]);
-const REQUIRED_TRAINING_DAYS = 5;
-const REQUIRED_ATTENDANCE_PERCENT = 80;
+const SURVEY_ELIGIBILITY_DAY = 5;
 
 const readStringField = (data: Record<string, unknown>, keys: string[]) => {
   for (const key of keys) {
@@ -26,8 +19,11 @@ const readStringField = (data: Record<string, unknown>, keys: string[]) => {
   return '';
 };
 
+const normalizeSurveyToken = (value: string) =>
+  value.trim().replace(/\s+/g, '-').toLowerCase();
+
 const findSurvey = async (token: string) => {
-  const cleanToken = token.trim().toLowerCase();
+  const cleanToken = normalizeSurveyToken(token);
   const byToken = await adminDb
     .collection('surveys')
     .where('token', '==', token)
@@ -41,12 +37,59 @@ const findSurvey = async (token: string) => {
   const snapshot = await adminDb.collection('surveys').get();
   return snapshot.docs.find((doc) => {
     const survey = doc.data();
-    const surveyToken = String(survey.token || '').trim().toLowerCase();
-    const generation = String(survey.codigo_generacion || '').trim().toLowerCase();
+    const surveyToken = normalizeSurveyToken(String(survey.token || ''));
+    const generation = normalizeSurveyToken(String(survey.codigo_generacion || ''));
     const slug = generation.replace(/\s+/g, '-');
     return surveyToken === cleanToken || generation === cleanToken || slug === cleanToken;
   }) || null;
 };
+
+const getPublicSurvey = async (surveyDoc: Awaited<ReturnType<typeof findSurvey>>) => {
+  if (!surveyDoc) return null;
+  const survey = { id: surveyDoc.id, ...surveyDoc.data() } as Record<string, unknown>;
+  const sessionId = String(survey.training_session_id || '');
+  const sessionDoc = sessionId ? await adminDb.collection('sessions').doc(sessionId).get() : null;
+  const session = sessionDoc?.exists
+    ? ({ id: sessionDoc.id, ...sessionDoc.data() } as Record<string, unknown>)
+    : null;
+  return {
+    id: survey.id,
+    training_session_id: sessionId,
+    estado: survey.estado,
+    token: String(survey.token || ''),
+    campaña:
+      readStringField(survey, ['campaña', 'campana', 'campa�a']) ||
+      readStringField(session || {}, ['campaña', 'campana', 'campa�a']),
+    codigo_generacion:
+      readStringField(session || {}, ['generation_code', 'nombre_generacion']) ||
+      readStringField(survey, ['codigo_generacion']),
+    formador_id:
+      readStringField(session || {}, ['formador_id']) ||
+      readStringField(survey, ['formador_id']),
+    formador_nombre:
+      readStringField(session || {}, ['formador_nombre']) ||
+      readStringField(survey, ['formador_nombre']),
+  };
+};
+
+router.get('/:token/metadata', async (req, res: Response) => {
+  const token = tokenSchema.safeParse(req.params.token);
+  if (!token.success) {
+    res.status(400).json({ message: 'Enlace de encuesta invalido.' });
+    return;
+  }
+  const surveyDoc = await findSurvey(token.data);
+  const survey = await getPublicSurvey(surveyDoc);
+  if (!survey) {
+    res.status(404).json({ message: 'No se encontro la encuesta solicitada.' });
+    return;
+  }
+  if (survey.estado !== 'Habilitada') {
+    res.status(410).json({ message: 'Esta encuesta no se encuentra habilitada.' });
+    return;
+  }
+  res.set('Cache-Control', 'no-store').json({ survey });
+});
 
 const findParticipant = async (sessionId: string, dni: string) => {
   const snapshot = await adminDb
@@ -54,20 +97,6 @@ const findParticipant = async (sessionId: string, dni: string) => {
     .where('training_session_id', '==', sessionId)
     .get();
   return snapshot.docs.find((item) => item.data().dni === dni) || null;
-};
-
-const getAttendancePercent = (participantId: string, attendance: Array<Record<string, unknown>>) => {
-  const presentDays = new Set(
-    attendance
-      .filter(
-        (item) =>
-          String(item.participant_id || '') === participantId &&
-          PRESENT_ATTENDANCE.has(String(item.estado_asistencia || '')),
-      )
-      .map((item) => Number(item.dia)),
-  ).size;
-
-  return Math.round((presentDays / REQUIRED_TRAINING_DAYS) * 100);
 };
 
 const canAnswerSurvey = (
@@ -85,11 +114,12 @@ const canAnswerSurvey = (
 
   if (hasDropout) return false;
 
-  const hasApprovedOutcome =
-    String(participant.resultado_formacion || '') === 'Apto' ||
-    SURVEY_READY_FINAL_STATES.has(String(participant.estado_final || ''));
-
-  return hasApprovedOutcome && getAttendancePercent(participantId, attendance) >= REQUIRED_ATTENDANCE_PERCENT;
+  return attendance.some(
+    (item) =>
+      String(item.participant_id || '') === participantId &&
+      Number(item.dia) === SURVEY_ELIGIBILITY_DAY &&
+      PRESENT_ATTENDANCE.has(String(item.estado_asistencia || '')),
+  );
 };
 
 router.get('/:token', async (req, res: Response) => {
@@ -106,30 +136,14 @@ router.get('/:token', async (req, res: Response) => {
     return;
   }
 
-  const survey = { id: surveyDoc.id, ...surveyDoc.data() } as Record<string, unknown>;
-  if (survey.estado !== 'Habilitada') {
+  const surveyData = { id: surveyDoc.id, ...surveyDoc.data() } as Record<string, unknown>;
+  if (surveyData.estado !== 'Habilitada') {
     res.status(410).json({ message: 'Esta encuesta no se encuentra habilitada.' });
     return;
   }
 
-  const sessionId = String(survey.training_session_id || '');
-  const sessionDoc = sessionId ? await adminDb.collection('sessions').doc(sessionId).get() : null;
-  const session = sessionDoc?.exists ? ({ id: sessionDoc.id, ...sessionDoc.data() } as Record<string, unknown>) : null;
-  const currentSurvey = {
-    ...survey,
-    campaña:
-      readStringField(survey, ['campaña', 'campana', 'campa�a']) ||
-      readStringField(session || {}, ['campaña', 'campana', 'campa�a']),
-    codigo_generacion:
-      readStringField(session || {}, ['generation_code', 'nombre_generacion']) ||
-      readStringField(survey, ['codigo_generacion']),
-    formador_id:
-      readStringField(session || {}, ['formador_id']) ||
-      readStringField(survey, ['formador_id']),
-    formador_nombre:
-      readStringField(session || {}, ['formador_nombre']) ||
-      readStringField(survey, ['formador_nombre']),
-  };
+  const sessionId = String(surveyData.training_session_id || '');
+  const currentSurvey = await getPublicSurvey(surveyDoc);
   const participantDoc = await findParticipant(sessionId, dni.data);
   if (!participantDoc) {
     res.status(404).json({
@@ -144,7 +158,7 @@ router.get('/:token', async (req, res: Response) => {
   } as Record<string, unknown>;
   const responseSnapshot = await adminDb
     .collection('responses')
-    .where('training_survey_id', '==', survey.id)
+    .where('training_survey_id', '==', surveyData.id)
     .get();
 
   if (responseSnapshot.docs.some((item) => item.data().dni === dni.data)) {
@@ -160,11 +174,9 @@ router.get('/:token', async (req, res: Response) => {
     id: item.id,
     ...item.data(),
   })) as Array<Record<string, unknown>>;
-  const attendancePercent = getAttendancePercent(String(participant.id), attendance);
-
   if (!canAnswerSurvey(participant, attendance)) {
     res.status(403).json({
-      message: `No cumples con el porcentaje minimo de asistencia requerido (80%) o aun no tienes resultado apto de capacitacion. Tu asistencia registrada es ${attendancePercent}%.`,
+      message: 'No registras asistencia en el Dia 5 de capacitacion o tienes una baja/desercion registrada.',
     });
     return;
   }
@@ -227,11 +239,9 @@ router.post('/:token/responses', async (req, res: Response) => {
     id: item.id,
     ...item.data(),
   })) as Array<Record<string, unknown>>;
-  const attendancePercent = getAttendancePercent(participantDoc.id, attendance);
-
   if (!canAnswerSurvey(participant, attendance)) {
     res.status(403).json({
-      message: `No cumples con el porcentaje minimo de asistencia requerido (80%) o aun no tienes resultado apto de capacitacion. Tu asistencia registrada es ${attendancePercent}%.`,
+      message: 'No registras asistencia en el Dia 5 de capacitacion o tienes una baja/desercion registrada.',
     });
     return;
   }

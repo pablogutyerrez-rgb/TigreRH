@@ -95,7 +95,7 @@ import {
   persistParticipant,
   persistReopenRequest,
 } from './services/operationService';
-import { updateSurveyLinkAssignmentsRemote, updateSurveyStatusRemote } from './services/surveyService';
+import { createSurveyRemote, updateSurveyLinkAssignmentsRemote, updateSurveyStatusRemote } from './services/surveyService';
 import { APP_NAME } from './constants/app';
 import loginBackgroundVideo from './assets/login-background.mp4';
 import { CURRENT_TRAINING_DAYS_COUNT, getTrainingDays, getTrainingDaysCount } from './utils/trainingDays';
@@ -768,9 +768,11 @@ export default function App() {
   };
 
   // --- Satisfaction Survey State Modifiers ---
-  const handleUpdateSurveyStatus = (surveyId: string, status: SurveyStatus) => {
-    setSurveys(prev => prev.map(s => {
-      if (s.id === surveyId) {
+  const handleUpdateSurveyStatus = async (surveyId: string, status: SurveyStatus) => {
+    const survey = surveys.find((item) => item.id === surveyId);
+    if (!survey) return;
+    try {
+      const s = survey;
         const nowStr = new Date().toISOString();
         const nowPeru = formatPeruDate(getEffectivePeruTime());
         const updated = {
@@ -784,10 +786,8 @@ export default function App() {
           deleted_at: status === 'Eliminada' ? nowPeru : s.deleted_at,
           deleted_by: status === 'Eliminada' ? (activeUser?.id || '') : s.deleted_by
         };
-        void updateSurveyStatusRemote(surveyId, status, updated).catch((error) => {
-          console.error('Error persisting survey status:', error);
-          alert(error instanceof Error ? error.message : 'No se pudo guardar el estado de la encuesta.');
-        });
+      await updateSurveyStatusRemote(surveyId, status, updated);
+      setSurveys(prev => prev.map(item => item.id === surveyId ? updated : item));
         addAuditLog(
           `Estado de encuesta modificado: ${status}`,
           'Encuestas de Satisfacción',
@@ -795,14 +795,15 @@ export default function App() {
           s.campaña,
           s.codigo_generacion
         );
-        return updated;
-      }
-      return s;
-    }));
+    } catch (error) {
+      console.error('Error persisting survey status:', error);
+      alert(error instanceof Error ? error.message : 'No se pudo guardar el estado de la encuesta.');
+    }
   };
 
-  const handleAddSurvey = (newSurvey: TrainingSurvey) => {
-    setSurveys(prev => [newSurvey, ...prev]);
+  const handleAddSurvey = async (newSurvey: TrainingSurvey) => {
+    const savedSurvey = await createSurveyRemote(newSurvey);
+    setSurveys(prev => [savedSurvey, ...prev]);
     addAuditLog(
       'Encuesta creada manualmente',
       'Encuestas de Satisfacción',
@@ -816,7 +817,7 @@ export default function App() {
     setUrlView('survey');
     setUrlToken(token);
     const origin = window.location.origin + window.location.pathname;
-    window.history.pushState({}, '', `${origin}?view=survey&token=${token}`);
+    window.history.pushState({}, '', `${origin}?view=survey&token=${encodeURIComponent(token)}`);
   };
 
   // 2. Delete Training Session
@@ -1066,14 +1067,12 @@ export default function App() {
     };
   };
 
-  const handleUpdateSurveyAssignments = (surveyId: string, userIds: string[]) => {
-    setSurveys(prev => prev.map(survey => {
-      if (survey.id !== surveyId) return survey;
-      const updated = { ...survey, link_assigned_user_ids: userIds };
-      void updateSurveyLinkAssignmentsRemote(surveyId, userIds).catch((error) => {
-        console.error('Error persisting survey link assignments:', error);
-        alert(error instanceof Error ? error.message : 'No se pudieron guardar las asignaciones del enlace.');
-      });
+  const handleUpdateSurveyAssignments = async (surveyId: string, userIds: string[]) => {
+    try {
+      await updateSurveyLinkAssignmentsRemote(surveyId, userIds);
+      setSurveys(prev => prev.map(survey => {
+        if (survey.id !== surveyId) return survey;
+        const updated = { ...survey, link_assigned_user_ids: userIds };
       addAuditLog(
         'Asignaciones de enlace actualizadas',
         'Encuestas de Satisfacción',
@@ -1081,8 +1080,13 @@ export default function App() {
         survey.campaña,
         survey.codigo_generacion,
       );
-      return updated;
-    }));
+        return updated;
+      }));
+    } catch (error) {
+      console.error('Error persisting survey link assignments:', error);
+      alert(error instanceof Error ? error.message : 'No se pudieron guardar las asignaciones del enlace.');
+      throw error;
+    }
   };
 
   const getTrainingDayDate = (session: TrainingSession | undefined, day: number) => {

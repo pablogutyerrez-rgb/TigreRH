@@ -25,6 +25,14 @@ export const getPublicSurveyContext = async (token: string, dni: string) => {
   }>(response);
 };
 
+export const getPublicSurveyMetadata = async (token: string) => {
+  const response = await fetch(
+    `${API_BASE_URL}/api/public-surveys/${encodeURIComponent(token)}/metadata`,
+    { cache: 'no-store' },
+  );
+  return parseResponse<{ survey: TrainingSurvey }>(response);
+};
+
 export const submitPublicSurveyResponse = async (
   token: string,
   payload: {

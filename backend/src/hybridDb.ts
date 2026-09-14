@@ -315,21 +315,49 @@ class HybridQuery {
   }
 
   async get() {
-    const documents = await listDocumentData(this.collectionName);
-    let entries = Array.from(documents.entries()).filter(([, data]) =>
-      this.filters.every((filter) => data[filter.field] === filter.value),
-    );
+    await ensureHybridSchema();
+    const values: unknown[] = [this.collectionName];
+    const conditions = ['collection_name = $1', 'is_deleted = FALSE'];
+    this.filters.forEach((filter) => {
+      if (!/^[A-Za-z0-9_\u00C0-\u024F]+$/.test(filter.field)) {
+        throw new Error(`Unsupported hybrid query field: ${filter.field}`);
+      }
+      values.push(
+        typeof filter.value === 'string'
+          ? filter.value
+          : JSON.stringify(filter.value),
+      );
+      const parameter = `$${values.length}`;
+      conditions.push(
+        typeof filter.value === 'string'
+          ? `payload ->> '${filter.field}' = ${parameter}`
+          : `payload -> '${filter.field}' = ${parameter}::jsonb`,
+      );
+    });
+    let orderClause = '';
     if (this.ordering) {
-      const { field, direction } = this.ordering;
-      entries.sort(([, left], [, right]) => {
-        const comparison = String(left[field] ?? '').localeCompare(String(right[field] ?? ''));
-        return direction === 'desc' ? -comparison : comparison;
-      });
+      if (!/^[A-Za-z0-9_\u00C0-\u024F]+$/.test(this.ordering.field)) {
+        throw new Error(`Unsupported hybrid order field: ${this.ordering.field}`);
+      }
+      orderClause = ` ORDER BY payload ->> '${this.ordering.field}' ${this.ordering.direction.toUpperCase()}`;
     }
-    if (this.maximum !== undefined) entries = entries.slice(0, this.maximum);
+    let limitClause = '';
+    if (this.maximum !== undefined) {
+      values.push(this.maximum);
+      limitClause = ` LIMIT $${values.length}`;
+    }
+    const result = await getPostgresPool().query(
+      `SELECT document_id, payload
+       FROM tigre_rh.current_documents
+       WHERE ${conditions.join(' AND ')}${orderClause}${limitClause}`,
+      values,
+    );
     return new HybridQuerySnapshot(
-      entries.map(([id, data]) =>
-        new HybridDocumentSnapshot(new HybridDocumentReference(this.collectionName, id), data)),
+      result.rows.map((row: { document_id: string; payload: Data }) =>
+        new HybridDocumentSnapshot(
+          new HybridDocumentReference(this.collectionName, row.document_id),
+          row.payload,
+        )),
     );
   }
 }

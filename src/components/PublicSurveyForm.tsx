@@ -8,6 +8,7 @@ import { APP_NAME } from '../constants/app';
 import { formatPeruDate } from '../utils/time';
 import {
   getPublicSurveyContext,
+  getPublicSurveyMetadata,
   submitPublicSurveyResponse,
 } from '../services/publicSurveyService';
 
@@ -68,6 +69,7 @@ export default function PublicSurveyForm({
   const [activeParticipant, setActiveParticipant] = useState<Participant | null>(null);
   const [activeSurvey, setActiveSurvey] = useState<TrainingSurvey | null>(null);
   const [remoteSurvey, setRemoteSurvey] = useState<TrainingSurvey | null>(null);
+  const [loadingSurvey, setLoadingSurvey] = useState(Boolean(surveyToken));
   const [validating, setValidating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -88,10 +90,11 @@ export default function PublicSurveyForm({
   const activeSurveysList = surveys.filter(s => s.estado === 'Habilitada');
 
   React.useEffect(() => {
-    if (!surveyToken || !dni) return;
+    if (!surveyToken) return;
 
     let cancelled = false;
-    getPublicSurveyContext(surveyToken, dni)
+    setLoadingSurvey(true);
+    getPublicSurveyMetadata(surveyToken)
       .then(({ survey }) => {
         if (cancelled) return;
         setRemoteSurvey(survey);
@@ -100,8 +103,12 @@ export default function PublicSurveyForm({
       })
       .catch((error) => {
         if (!cancelled) {
+          setRemoteSurvey(null);
           setValidationError(error instanceof Error ? error.message : 'No se pudo cargar la encuesta.');
         }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingSurvey(false);
       });
 
     return () => {
@@ -510,6 +517,13 @@ export default function PublicSurveyForm({
                       srv => srv.token.toLowerCase() === surveyToken.trim().toLowerCase() ||
                       srv.codigo_generacion.replace(/\s+/g, '-').toLowerCase() === surveyToken.trim().toLowerCase()
                     );
+                    if (loadingSurvey) {
+                      return (
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-slate-600 text-xs font-semibold">
+                          Verificando enlace de encuesta...
+                        </div>
+                      );
+                    }
                     if (s) {
                       return (
                         <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-1">
@@ -533,7 +547,7 @@ export default function PublicSurveyForm({
                     }
                     return (
                       <div className="bg-rose-50 p-3 rounded-xl border border-rose-200 text-rose-800 text-xs">
-                        No se pudo encontrar ninguna capacitación con el enlace de acceso actual. Por favor, selecciona una capacitación de la lista o verifica con el área de Formación.
+                        {validationError || 'No se pudo encontrar ninguna capacitación con el enlace de acceso actual. Verifica con el área de Formación.'}
                       </div>
                     );
                   })()

@@ -28,9 +28,7 @@ import {
   Calendar,
   FileText,
   CheckCircle2,
-  UserCheck,
-  Mail,
-  Send
+  UserCheck
 } from 'lucide-react';
 import {
   BarChart,
@@ -49,7 +47,6 @@ import {
   Cell
 } from 'recharts';
 import * as XLSX from 'xlsx';
-import { sendSurveyInvitations } from '../services/surveyEmailService';
 import { permissions } from '../utils/permissions';
 import { isSurveyEligibleParticipant } from '../utils/trainingProgress';
 import { getSessionTrainerIds, getSessionTrainerNames, isSessionAssignedTrainer } from '../utils/trainingAssignments';
@@ -62,9 +59,9 @@ interface EncuestasProps {
   attendance: AttendanceRecord[];
   users: User[];
   currentUser: User;
-  onUpdateSurveyStatus: (surveyId: string, status: SurveyStatus) => void;
-  onAddSurvey?: (survey: TrainingSurvey) => void;
-  onUpdateSurveyAssignments: (surveyId: string, userIds: string[]) => void;
+  onUpdateSurveyStatus: (surveyId: string, status: SurveyStatus) => Promise<void>;
+  onAddSurvey?: (survey: TrainingSurvey) => Promise<void>;
+  onUpdateSurveyAssignments: (surveyId: string, userIds: string[]) => Promise<void>;
   onAuditLog: (
     accion: string,
     modulo: string,
@@ -122,13 +119,14 @@ export default function Encuestas({
   // Copy Feedback state
   const [copiedSurveyId, setCopiedSurveyId] = useState<string | null>(null);
   const [copiedDniId, setCopiedDniId] = useState<string | null>(null);
-  const [sendingEmailId, setSendingEmailId] = useState<string | null>(null);
-  const [emailFeedback, setEmailFeedback] = useState('');
+  const [savingSurveyId, setSavingSurveyId] = useState<string | null>(null);
+  const [isCreatingSurvey, setIsCreatingSurvey] = useState(false);
+  const [isSavingAssignments, setIsSavingAssignments] = useState(false);
   const [viewingResponse, setViewingResponse] = useState<SurveyResponse | null>(null);
 
   const handleCopyLink = (token: string, surveyId: string) => {
     const origin = window.location.origin + window.location.pathname;
-    const url = `${origin}?view=survey&token=${token}`;
+    const url = `${origin}?view=survey&token=${encodeURIComponent(token)}`;
     navigator.clipboard.writeText(url);
     setCopiedSurveyId(surveyId);
     setTimeout(() => setCopiedSurveyId(null), 2000);
@@ -146,7 +144,6 @@ export default function Encuestas({
   const isAnalyst = currentUser.rol === 'Analista';
   const isRecruiter = currentUser.rol === 'Reclutador';
   const isStaff = currentUser.rol === 'Coordinador' || currentUser.rol === 'Sistemas';
-  const canSendSurveyEmails = isAdmin || isAnalyst || isRecruiter || currentUser.rol === 'Coordinador';
 
   // --- HELPER FOR ANONYMIZATION ---
   const getTrainerDisplayName = (trainerId: string, trainerName: string) => {
@@ -279,10 +276,15 @@ export default function Encuestas({
     setAssignmentUserIds(survey.link_assigned_user_ids || []);
   };
 
-  const saveAssignments = () => {
+  const saveAssignments = async () => {
     if (!assignmentSurveyId) return;
-    onUpdateSurveyAssignments(assignmentSurveyId, assignmentUserIds);
-    setAssignmentSurveyId(null);
+    try {
+      setIsSavingAssignments(true);
+      await onUpdateSurveyAssignments(assignmentSurveyId, assignmentUserIds);
+      setAssignmentSurveyId(null);
+    } finally {
+      setIsSavingAssignments(false);
+    }
   };
 
   // General filtered responses from non-deleted surveys
@@ -602,7 +604,7 @@ export default function Encuestas({
     }
   };
 
-  const handleCreateSurveySubmit = (e: React.FormEvent) => {
+  const handleCreateSurveySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSessionId || !selectedSessionObj) return;
 
@@ -625,14 +627,31 @@ export default function Encuestas({
       created_at: new Date().toISOString()
     };
 
-    if (onAddSurvey) {
-      onAddSurvey(newSurvey);
+    if (!onAddSurvey) return;
+    try {
+      setIsCreatingSurvey(true);
+      await onAddSurvey(newSurvey);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'No se pudo crear la encuesta.');
+      return;
+    } finally {
+      setIsCreatingSurvey(false);
     }
 
     setIsCreateModalOpen(false);
     setSelectedSessionId('');
     setSurveyStatus('Borrador');
     setTokenInput('');
+  };
+
+  const handleSurveyStatusChange = async (surveyId: string, status: SurveyStatus) => {
+    if (savingSurveyId) return;
+    try {
+      setSavingSurveyId(surveyId);
+      await onUpdateSurveyStatus(surveyId, status);
+    } finally {
+      setSavingSurveyId(null);
+    }
   };
 
   // Soft delete survey handler with custom confirmation modal & logging
@@ -680,7 +699,7 @@ export default function Encuestas({
     if (deleteSurveyId) {
       const s = surveys.find(srv => srv.id === deleteSurveyId);
       if (s) {
-        onUpdateSurveyStatus(deleteSurveyId, 'Eliminada');
+        void handleSurveyStatusChange(deleteSurveyId, 'Eliminada');
 
         onAuditLog(
           'Administrador elimina encuesta',
@@ -746,7 +765,7 @@ export default function Encuestas({
 
   const handleCopyPersonalLink = (token: string, dniVal: string, pId: string) => {
     const origin = window.location.origin + window.location.pathname;
-    const url = `${origin}?view=survey&token=${token}&dni=${dniVal}`;
+    const url = `${origin}?view=survey&token=${encodeURIComponent(token)}&dni=${encodeURIComponent(dniVal)}`;
     navigator.clipboard.writeText(url);
     setCopiedDniId(pId);
     setTimeout(() => setCopiedDniId(null), 2000);
@@ -756,97 +775,6 @@ export default function Encuestas({
       'Encuestas de Satisfacción',
       `Se copió el enlace de encuesta personalizado para el DNI "${dniVal}" (Token: ${token})`
     );
-  };
-
-  const buildPersonalSurveyUrl = (token: string, dniVal: string) => {
-    const origin = window.location.origin + window.location.pathname;
-    return `${origin}?view=survey&token=${token}&dni=${dniVal}`;
-  };
-
-  const buildSurveyEmailInfo = (survey: TrainingSurvey) => ({
-    id: survey.id,
-    campana: survey.campaña,
-    codigo_generacion: getSurveyGenerationCode(survey),
-    formador_nombre: survey.formador_nombre,
-  });
-
-  const buildRecipient = (survey: TrainingSurvey, participant: Participant) => ({
-    participant_id: participant.id,
-    nombre: `${participant.nombres} ${participant.apellidos}`.trim(),
-    dni: participant.dni,
-    correo: participant.correo,
-    url: buildPersonalSurveyUrl(survey.token, participant.dni),
-  });
-
-  const handleSendPersonalEmail = async (survey: TrainingSurvey, participant: Participant) => {
-    if (!participant.correo) {
-      setEmailFeedback('El participante no tiene correo registrado.');
-      return;
-    }
-
-    setSendingEmailId(participant.id);
-    setEmailFeedback('');
-
-    try {
-      await sendSurveyInvitations({
-        survey: buildSurveyEmailInfo(survey),
-        recipients: [buildRecipient(survey, participant)],
-      });
-
-      setEmailFeedback(`Correo enviado a ${participant.correo}.`);
-      onAuditLog(
-        'Encuesta enviada por correo',
-        'Encuestas de Satisfacción',
-        `Se envió la encuesta por correo al DNI "${participant.dni}" (${participant.correo}).`,
-        survey.campaña,
-        survey.codigo_generacion,
-        participant.id,
-        `${participant.nombres} ${participant.apellidos}`,
-      );
-    } catch (error) {
-      setEmailFeedback(error instanceof Error ? error.message : 'No se pudo enviar el correo.');
-    } finally {
-      setSendingEmailId(null);
-      setTimeout(() => setEmailFeedback(''), 5000);
-    }
-  };
-
-  const handleSendPendingEmails = async () => {
-    if (!currentMonitoreoSurvey || !monitoreoData) return;
-
-    const pendingRecipients = monitoreoData.list
-      .filter((item) => !item.hasResponded && item.participant.correo)
-      .map((item) => buildRecipient(currentMonitoreoSurvey, item.participant));
-
-    if (pendingRecipients.length === 0) {
-      setEmailFeedback('No hay participantes pendientes con correo registrado.');
-      setTimeout(() => setEmailFeedback(''), 5000);
-      return;
-    }
-
-    setSendingEmailId(`survey-${currentMonitoreoSurvey.id}`);
-    setEmailFeedback('');
-
-    try {
-      await sendSurveyInvitations({
-        survey: buildSurveyEmailInfo(currentMonitoreoSurvey),
-        recipients: pendingRecipients,
-      });
-
-      setEmailFeedback(`Se enviaron ${pendingRecipients.length} correos de encuesta.`);
-      onAuditLog(
-        'Encuestas enviadas por correo',
-        'Encuestas de Satisfacción',
-        `Se enviaron ${pendingRecipients.length} invitaciones por correo para la generación "${currentMonitoreoSurvey.codigo_generacion}".`,
-        currentMonitoreoSurvey.campaña,
-        currentMonitoreoSurvey.codigo_generacion,
-      );
-    } catch (error) {
-      setEmailFeedback(error instanceof Error ? error.message : 'No se pudieron enviar los correos.');
-    } finally {
-      setSendingEmailId(null);
-      setTimeout(() => setEmailFeedback(''), 6000);
-    }
   };
 
   // --- EXPORT LOGIC FOR EXCEL & CSV ---
@@ -1579,23 +1507,9 @@ export default function Encuestas({
                     </span>
                     <h4 className="font-extrabold text-sm mt-1">{currentMonitoreoSurvey.campaña} - {getSurveyGenerationCode(currentMonitoreoSurvey)}</h4>
                     <p className="text-xs text-slate-400">Formador asignado: <strong className="text-white">{getTrainerDisplayName(currentMonitoreoSurvey.formador_id, currentMonitoreoSurvey.formador_nombre)}</strong></p>
-                    {emailFeedback && (
-                      <p className="text-[11px] text-emerald-300 font-bold mt-2">{emailFeedback}</p>
-                    )}
                   </div>
 
                   <div className="flex flex-col sm:flex-row sm:items-center gap-3 shrink-0">
-                    {currentMonitoreoSurvey.estado === 'Habilitada' && canSendSurveyEmails && (
-                      <button
-                        onClick={handleSendPendingEmails}
-                        disabled={sendingEmailId === `survey-${currentMonitoreoSurvey.id}`}
-                        className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white px-3 py-2 rounded-xl font-bold text-[10px] uppercase flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                        title="Enviar encuesta por correo a todos los pendientes con correo registrado"
-                      >
-                        <Send className="w-3.5 h-3.5" />
-                        {sendingEmailId === `survey-${currentMonitoreoSurvey.id}` ? 'Enviando...' : 'Enviar pendientes'}
-                      </button>
-                    )}
                     <div className="flex items-center gap-4 bg-white/5 px-4 py-2.5 rounded-xl border border-white/5">
                       <div className="text-center">
                         <span className="text-[10px] text-slate-400 block font-bold uppercase">Respondieron</span>
@@ -1659,26 +1573,15 @@ export default function Encuestas({
                                   <span className="px-2.5 py-1 rounded-full text-[9px] font-bold uppercase bg-amber-50 text-amber-700 border border-amber-100">
                                     Pendiente
                                   </span>
-                                  {currentMonitoreoSurvey.estado === 'Habilitada' && canSendSurveyEmails && (
-                                    <>
-                                      <button
-                                        onClick={() => handleCopyPersonalLink(currentMonitoreoSurvey.token, item.participant.dni, item.participant.id)}
-                                        className="text-[10px] font-extrabold text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 border border-indigo-150 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
-                                        title="Copia link con el DNI pre-rellenado para el ejecutivo"
-                                      >
-                                        {customLinkCopied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
-                                        {customLinkCopied ? 'Copiado!' : 'Copiar Link'}
-                                      </button>
-                                      <button
-                                        onClick={() => handleSendPersonalEmail(currentMonitoreoSurvey, item.participant)}
-                                        disabled={!item.participant.correo || sendingEmailId === item.participant.id}
-                                        className="text-[10px] font-extrabold text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 border border-emerald-150 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                                        title="Enviar enlace personalizado por correo"
-                                      >
-                                        <Mail className="w-3 h-3" />
-                                        {sendingEmailId === item.participant.id ? 'Enviando...' : 'Enviar correo'}
-                                      </button>
-                                    </>
+                                  {currentMonitoreoSurvey.estado === 'Habilitada' && (
+                                    <button
+                                      onClick={() => handleCopyPersonalLink(currentMonitoreoSurvey.token, item.participant.dni, item.participant.id)}
+                                      className="text-[10px] font-extrabold text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 border border-indigo-150 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+                                      title="Copia link con el DNI pre-rellenado para el ejecutivo"
+                                    >
+                                      {customLinkCopied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                                      {customLinkCopied ? 'Copiado!' : 'Copiar Link'}
+                                    </button>
                                   )}
                                 </div>
                               )}
@@ -1755,7 +1658,7 @@ export default function Encuestas({
                 <tbody className="divide-y divide-slate-100">
                   {assignedLinkSurveys.map((survey) => {
                     const origin = window.location.origin + window.location.pathname;
-                    const fullLink = `${origin}?view=survey&token=${survey.token}`;
+                    const fullLink = `${origin}?view=survey&token=${encodeURIComponent(survey.token)}`;
                     return (
                       <tr key={survey.id} className="hover:bg-slate-50/40 font-medium text-slate-700">
                         <td className="p-3 font-extrabold text-slate-800 whitespace-nowrap">{getSurveyGenerationCode(survey)}</td>
@@ -1814,7 +1717,7 @@ export default function Encuestas({
                   visibleSurveys.map((s) => {
                     const isCopied = copiedSurveyId === s.id;
                     const origin = window.location.origin + window.location.pathname;
-                    const fullLink = `${origin}?view=survey&token=${s.token}`;
+                    const fullLink = `${origin}?view=survey&token=${encodeURIComponent(s.token)}`;
 
                     return (
                       <tr key={s.id} className="hover:bg-slate-50/40 font-medium text-slate-700">
@@ -1881,23 +1784,26 @@ export default function Encuestas({
                             {/* Actions to move between states */}
                             {s.estado !== 'Habilitada' && (
                               <button
-                                onClick={() => onUpdateSurveyStatus(s.id, 'Habilitada')}
+                                onClick={() => void handleSurveyStatusChange(s.id, 'Habilitada')}
+                                disabled={savingSurveyId === s.id}
                                 className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-3 py-1.5 rounded-xl font-bold text-[10px] uppercase flex items-center gap-1 transition-all cursor-pointer border border-emerald-200"
                               >
                                 <Play className="w-3 h-3 fill-emerald-700" />
-                                Habilitar
+                                {savingSurveyId === s.id ? 'Guardando...' : 'Habilitar'}
                               </button>
                             )}
                             {s.estado === 'Habilitada' && (
                               <>
                                 <button
-                                  onClick={() => onUpdateSurveyStatus(s.id, 'Deshabilitada')}
+                                  onClick={() => void handleSurveyStatusChange(s.id, 'Deshabilitada')}
+                                  disabled={savingSurveyId === s.id}
                                   className="bg-amber-50 hover:bg-amber-100 text-amber-700 px-3 py-1.5 rounded-xl font-bold text-[10px] uppercase flex items-center gap-1 transition-all cursor-pointer border border-amber-200"
                                 >
                                   Deshabilitar
                                 </button>
                                 <button
-                                  onClick={() => onUpdateSurveyStatus(s.id, 'Cerrada')}
+                                  onClick={() => void handleSurveyStatusChange(s.id, 'Cerrada')}
+                                  disabled={savingSurveyId === s.id}
                                   className="bg-rose-50 hover:bg-rose-100 text-rose-700 px-3 py-1.5 rounded-xl font-bold text-[10px] uppercase flex items-center gap-1 transition-all cursor-pointer border border-rose-200"
                                 >
                                   <Square className="w-3 h-3 fill-rose-700" />
@@ -1907,7 +1813,8 @@ export default function Encuestas({
                             )}
                             {s.estado === 'Deshabilitada' && (
                               <button
-                                onClick={() => onUpdateSurveyStatus(s.id, 'Cerrada')}
+                                onClick={() => void handleSurveyStatusChange(s.id, 'Cerrada')}
+                                disabled={savingSurveyId === s.id}
                                 className="bg-rose-50 hover:bg-rose-100 text-rose-700 px-3 py-1.5 rounded-xl font-bold text-[10px] uppercase flex items-center gap-1 transition-all cursor-pointer border border-rose-200"
                               >
                                 Cerrar
@@ -1965,7 +1872,7 @@ export default function Encuestas({
             </div>
             <div className="flex gap-3 pt-2">
               <button type="button" onClick={() => setAssignmentSurveyId(null)} className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl py-3 text-xs">Cancelar</button>
-              <button type="button" onClick={saveAssignments} className="flex-1 bg-fuchsia-600 hover:bg-fuchsia-700 text-white font-bold rounded-xl py-3 text-xs">Guardar asignaciones</button>
+              <button type="button" onClick={() => void saveAssignments()} disabled={isSavingAssignments} className="flex-1 bg-fuchsia-600 hover:bg-fuchsia-700 disabled:opacity-60 text-white font-bold rounded-xl py-3 text-xs">{isSavingAssignments ? 'Guardando...' : 'Guardar asignaciones'}</button>
             </div>
           </div>
         </div>
@@ -2099,10 +2006,10 @@ export default function Encuestas({
                 </button>
                 <button
                   type="submit"
-                  disabled={!selectedSessionId}
+                  disabled={!selectedSessionId || isCreatingSurvey}
                   className="flex-1 bg-gradient-to-r from-fuchsia-600 to-indigo-600 hover:opacity-95 text-white font-bold rounded-xl py-3 cursor-pointer transition-transform shadow-md disabled:opacity-50 disabled:cursor-not-allowed text-center"
                 >
-                  Guardar Encuesta
+                  {isCreatingSurvey ? 'Guardando...' : 'Guardar Encuesta'}
                 </button>
               </div>
             </form>
