@@ -7,6 +7,7 @@ const router = Router();
 const tokenSchema = z.string().trim().min(1).max(160);
 const dniSchema = z.string().trim().regex(/^\d{8,15}$/);
 const SURVEY_ELIGIBILITY_DAY = 5;
+const normalizeDocument = (value: unknown) => String(value ?? '').trim().replace(/^0+(?=\d)/, '');
 
 const readStringField = (data: Record<string, unknown>, keys: string[]) => {
   for (const key of keys) {
@@ -93,7 +94,7 @@ const findParticipant = async (sessionId: string, dni: string) => {
     .collection('participants')
     .where('training_session_id', '==', sessionId)
     .get();
-  return snapshot.docs.find((item) => item.data().dni === dni) || null;
+  return snapshot.docs.find((item) => normalizeDocument(item.data().dni) === normalizeDocument(dni)) || null;
 };
 
 const canAnswerSurvey = (
@@ -147,7 +148,7 @@ router.get('/:token', async (req, res: Response) => {
     .where('training_survey_id', '==', surveyData.id)
     .get();
 
-  if (responseSnapshot.docs.some((item) => item.data().dni === dni.data)) {
+  if (responseSnapshot.docs.some((item) => normalizeDocument(item.data().dni) === normalizeDocument(dni.data))) {
     res.status(409).json({ message: 'Ya registraste esta encuesta de satisfaccion.' });
     return;
   }
@@ -294,7 +295,7 @@ router.post('/:token/responses', async (req, res: Response) => {
     .collection('responses')
     .where('training_survey_id', '==', survey.id)
     .get();
-  if (existing.docs.some((item) => item.data().dni === payload.data.dni)) {
+  if (existing.docs.some((item) => normalizeDocument(item.data().dni) === normalizeDocument(payload.data.dni))) {
     res.status(409).json({ message: 'Ya registraste esta encuesta de satisfaccion.' });
     return;
   }

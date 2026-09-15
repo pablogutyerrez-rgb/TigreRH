@@ -11,6 +11,8 @@ import {
   submitPublicSurveyResponse,
 } from '../services/publicSurveyService';
 
+const normalizeDocument = (value: unknown) => String(value ?? '').trim().replace(/^0+(?=\d)/, '');
+
 interface PublicSurveyFormProps {
   surveys: TrainingSurvey[];
   sessions: TrainingSession[];
@@ -203,7 +205,7 @@ export default function PublicSurveyForm({
 
     // Match DNI against participants of that session
     const matchedPart = participants.find(
-      p => p.training_session_id === survey.training_session_id && p.dni.trim() === cleanDni
+      p => p.training_session_id === survey.training_session_id && normalizeDocument(p.dni) === normalizeDocument(cleanDni)
     );
 
     if (!matchedPart) {
@@ -221,7 +223,7 @@ export default function PublicSurveyForm({
 
     // Check if duplicate response exists
     const alreadyResponded = responses.some(
-      r => r.training_survey_id === survey.id && r.dni.trim() === cleanDni
+      r => r.training_survey_id === survey.id && normalizeDocument(r.dni) === normalizeDocument(cleanDni)
     );
 
     if (alreadyResponded) {
