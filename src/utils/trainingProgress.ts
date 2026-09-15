@@ -49,6 +49,5 @@ export const isSurveyEligibleParticipant = (
   attendance.some(
     (record) =>
       record.participant_id === participant.id &&
-      record.dia === SURVEY_ELIGIBILITY_DAY &&
-      PRESENT_ATTENDANCE.has(record.estado_asistencia),
+      record.dia === SURVEY_ELIGIBILITY_DAY,
   );

@@ -6,9 +6,6 @@ const router = Router();
 
 const tokenSchema = z.string().trim().min(1).max(160);
 const dniSchema = z.string().trim().regex(/^\d{8,15}$/);
-const PRESENT_ATTENDANCE = new Set(['Asistio', 'Asisti�', 'Asistió', 'Tardanza']);
-const DROPOUT_ATTENDANCE = new Set(['Desisti�', 'Desistió', 'Baja']);
-const DROPOUT_FINAL_STATES = new Set(['Desisti�', 'Desistió', 'No asisti�', 'No asistió']);
 const SURVEY_ELIGIBILITY_DAY = 5;
 
 const readStringField = (data: Record<string, unknown>, keys: string[]) => {
@@ -104,21 +101,10 @@ const canAnswerSurvey = (
   attendance: Array<Record<string, unknown>>,
 ) => {
   const participantId = String(participant.id || '');
-  const hasDropout =
-    DROPOUT_FINAL_STATES.has(String(participant.estado_final || '')) ||
-    attendance.some(
-      (item) =>
-        String(item.participant_id || '') === participantId &&
-        DROPOUT_ATTENDANCE.has(String(item.estado_asistencia || '')),
-    );
-
-  if (hasDropout) return false;
-
   return attendance.some(
     (item) =>
       String(item.participant_id || '') === participantId &&
-      Number(item.dia) === SURVEY_ELIGIBILITY_DAY &&
-      PRESENT_ATTENDANCE.has(String(item.estado_asistencia || '')),
+      Number(item.dia) === SURVEY_ELIGIBILITY_DAY,
   );
 };
 
@@ -176,7 +162,7 @@ router.get('/:token', async (req, res: Response) => {
   })) as Array<Record<string, unknown>>;
   if (!canAnswerSurvey(participant, attendance)) {
     res.status(403).json({
-      message: 'No registras asistencia en el Dia 5 de capacitacion o tienes una baja/desercion registrada.',
+      message: 'No existe un registro de asistencia para el Dia 5 de capacitacion.',
     });
     return;
   }
@@ -241,7 +227,7 @@ router.post('/:token/responses', async (req, res: Response) => {
   })) as Array<Record<string, unknown>>;
   if (!canAnswerSurvey(participant, attendance)) {
     res.status(403).json({
-      message: 'No registras asistencia en el Dia 5 de capacitacion o tienes una baja/desercion registrada.',
+      message: 'No existe un registro de asistencia para el Dia 5 de capacitacion.',
     });
     return;
   }

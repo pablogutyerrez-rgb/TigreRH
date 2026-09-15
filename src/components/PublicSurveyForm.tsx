@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { TrainingSurvey, SurveyResponse, Participant, TrainingSession, AuditLog, User } from '../types';
-import { getTrainingAttendancePercent, isSurveyEligibleParticipant } from '../utils/trainingProgress';
-import { getTrainingDaysCount } from '../utils/trainingDays';
+import { isSurveyEligibleParticipant } from '../utils/trainingProgress';
 import { AlertTriangle, CheckCircle2, ShieldCheck, Clipboard, Send, Star, HelpCircle } from 'lucide-react';
 import BrandLogo from './BrandLogo';
 import { APP_NAME } from '../constants/app';
@@ -240,22 +239,19 @@ export default function PublicSurveyForm({
       return;
     }
 
-    // The survey is available to every participant who attended training Day 5.
+    // The survey is available once any attendance record exists for training Day 5.
     const pAttendance = attendance.filter(a => a.participant_id === matchedPart.id);
-    const matchedSession = sessions.find(session => session.id === survey.training_session_id);
-    const requiredTrainingDays = getTrainingDaysCount(matchedSession);
-    const attendancePercent = getTrainingAttendancePercent(matchedPart.id, pAttendance, requiredTrainingDays);
     if (!isSurveyEligibleParticipant(matchedPart, pAttendance)) {
       onAuditLog(
-        'Intento de encuesta rechazado por no asistir al Día 5',
+        'Intento de encuesta rechazado sin registro del Día 5',
         'Encuestas de Satisfacción',
-        `El ejecutivo "${matchedPart.nombres} ${matchedPart.apellidos}" (DNI: ${cleanDni}) fue rechazado porque no registra asistencia en el Día 5 de capacitación. Asistencia acumulada: ${attendancePercent}%.`,
+        `El ejecutivo "${matchedPart.nombres} ${matchedPart.apellidos}" (DNI: ${cleanDni}) fue rechazado porque no existe un registro de asistencia para el Día 5 de capacitación.`,
         survey.campaña,
         survey.codigo_generacion,
         matchedPart.id,
         `${matchedPart.nombres} ${matchedPart.apellidos}`
       );
-      setValidationError('No registras asistencia en el Día 5 de capacitación. Comunícate con el área de Formación.');
+      setValidationError('No existe un registro de asistencia para el Día 5 de capacitación. Comunícate con el área de Formación.');
       return;
     }
 
