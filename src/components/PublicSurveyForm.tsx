@@ -311,7 +311,7 @@ export default function PublicSurveyForm({
       id: `resp-${Math.random().toString(36).substring(2, 11)}`,
       training_survey_id: activeSurvey.id,
       participant_id: activeParticipant.id,
-      dni: activeParticipant.dni,
+      dni: dni.trim(),
       nombre_ejecutivo: `${activeParticipant.nombres} ${activeParticipant.apellidos}`,
       campaña: activeSurvey.campaña,
       codigo_generacion: activeSurvey.codigo_generacion,
@@ -345,7 +345,7 @@ export default function PublicSurveyForm({
       try {
         setSubmitting(true);
         const result = await submitPublicSurveyResponse(surveyToken, {
-          dni: activeParticipant.dni,
+          dni: dni.trim(),
           q1: p1,
           q2: p2,
           q3: p3,
