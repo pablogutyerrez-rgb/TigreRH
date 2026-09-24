@@ -70,6 +70,17 @@ const normalizeAttendanceStatus = (status?: string) =>
 
 const isPresentAttendance = (status?: string) => ['asistio', 'tardanza'].includes(normalizeAttendanceStatus(status));
 const isDesertionAttendance = (status?: string) => ['desistio', 'baja'].includes(normalizeAttendanceStatus(status));
+const EXCLUDENT_DESERTION_REASONS = new Set([
+  'problemas personales',
+  'abandono durante capacitacion',
+  'no acepta condiciones',
+  'otra propuesta laboral',
+  'problemas de salud',
+  'desistimiento voluntario',
+]);
+const isExcludentDesertion = (record: AttendanceRecord) =>
+  normalizeAttendanceStatus(record.estado_asistencia) === 'desistio' &&
+  EXCLUDENT_DESERTION_REASONS.has(normalizeAttendanceStatus(record.motivo_desercion));
 
 const calculatePhaseMetrics = (
   participantIds: Set<string>,
@@ -136,6 +147,7 @@ export default function Dashboard({
   const [filterFechaFin, setFilterFechaFin] = useState<string>('');
   const [filterMes, setFilterMes] = useState<string>('');
   const [filterEstado, setFilterEstado] = useState<'todos' | TrainingTemporalStatus>('todos');
+  const [excludeExcludentes, setExcludeExcludentes] = useState(false);
   const [evidencePreview, setEvidencePreview] = useState<{ src: string; name: string } | null>(null);
 
   const roleScopedSessions = useMemo(() => {
@@ -190,6 +202,7 @@ export default function Dashboard({
     setFilterFechaFin('');
     setFilterMes('');
     setFilterEstado('todos');
+    setExcludeExcludentes(false);
   };
 
   // Filtered Sessions
@@ -207,10 +220,17 @@ export default function Dashboard({
   }, [roleScopedSessions, filterCampañas, filterFormador, filterGeneracion, filterFechaInicio, filterFechaFin, filterMes, filterEstado]);
 
   const filteredSessionIds = useMemo(() => new Set(filteredSessions.map(s => s.id)), [filteredSessions]);
+  const excludentParticipantIds = useMemo(
+    () => new Set(attendance.filter(isExcludentDesertion).map((record) => record.participant_id)),
+    [attendance],
+  );
   // Filtered Participants
   const filteredParticipants = useMemo(() => {
-    return participants.filter(p => filteredSessionIds.has(p.training_session_id));
-  }, [participants, filteredSessionIds]);
+    return participants.filter(p =>
+      filteredSessionIds.has(p.training_session_id) &&
+      (!excludeExcludentes || !excludentParticipantIds.has(p.id)),
+    );
+  }, [participants, filteredSessionIds, excludeExcludentes, excludentParticipantIds]);
 
   const filteredParticipantIds = useMemo(() => new Set(filteredParticipants.map(p => p.id)), [filteredParticipants]);
 
@@ -253,7 +273,7 @@ export default function Dashboard({
       asistieronDia6: phase.d6Ids.size,
       asistieronDia10: phase.d10Ids.size,
       desercionesFinales: phase.desercionesFinales,
-      altasConfirmadas: phase.confirmedAltaIds.size,
+      altasConfirmadas: phase.d10Ids.size,
       ojtParticipantIds: phase.ojtParticipantIds,
       pendientesAlta,
       aptos,
@@ -291,10 +311,10 @@ export default function Dashboard({
     return campaigns.map(camp => {
       const campSessions = filteredSessions.filter(s => s.campaña === camp);
       const campSessionIds = new Set(campSessions.map(s => s.id));
-      const campParts = participants.filter(p => campSessionIds.has(p.training_session_id));
-      const campPartIds = new Set(campParts.map(p => p.id));
+      const campParts = filteredParticipants.filter(p => campSessionIds.has(p.training_session_id));
+      const campPartIds = new Set<string>(campParts.map(p => p.id));
 
-      const phase = calculatePhaseMetrics(campPartIds, attendance, validConfirmations);
+      const phase = calculatePhaseMetrics(campPartIds, filteredAttendance, filteredConfirmations);
 
       return {
         name: camp,
@@ -302,34 +322,34 @@ export default function Dashboard({
         'Asist. Día 1': phase.d1Ids.size,
         'Cierre Capacitación': phase.d5Ids.size,
         'Cierre OJT': phase.d10Ids.size,
-        Altas: phase.confirmedAltaIds.size,
+        Altas: phase.d10Ids.size,
         'Retención Capacitación %': phase.retencionCapacitacion,
         'Retención OJT %': phase.retencionOjt,
         'Deserción Final %': phase.desercionFinalRate,
       };
     });
-  }, [filteredSessions, participants, attendance, validConfirmations, filterCampañas]);
+  }, [filteredSessions, filteredParticipants, filteredAttendance, filteredConfirmations, filterCampañas]);
 
   // 3. Comparativo por Formador
   const formadorData = useMemo(() => {
     return visibleTrainers.map(t => {
       const trainerSessions = filteredSessions.filter(s => getSessionTrainerIds(s).includes(t.id));
       const sIds = new Set(trainerSessions.map(s => s.id));
-      const tParts = participants.filter(p => sIds.has(p.training_session_id));
-      const tPartIds = new Set(tParts.map(p => p.id));
+      const tParts = filteredParticipants.filter(p => sIds.has(p.training_session_id));
+      const tPartIds = new Set<string>(tParts.map(p => p.id));
 
-      const phase = calculatePhaseMetrics(tPartIds, attendance, validConfirmations);
+      const phase = calculatePhaseMetrics(tPartIds, filteredAttendance, filteredConfirmations);
 
       return {
         name: t.nombre.split(' ')[0] + ' ' + (t.nombre.split(' ')[1] || ''), // Short name
         Asignados: tParts.length,
         'Cierre Capacitación': phase.d5Ids.size,
         'Cierre OJT': phase.d10Ids.size,
-        Altas: phase.confirmedAltaIds.size,
+        Altas: phase.d10Ids.size,
         'Efectividad %': phase.retencionOjt,
       };
     });
-  }, [filteredSessions, visibleTrainers, participants, attendance, validConfirmations]);
+  }, [filteredSessions, visibleTrainers, filteredParticipants, filteredAttendance, filteredConfirmations]);
 
   // 4. Deserciones por Motivo
   const desertionDetails = useMemo(() => {
@@ -357,7 +377,21 @@ export default function Dashboard({
 
   const desercionesPorMotivo = useMemo(() => {
     const motivosCounts: { [key: string]: number } = {};
-    desertionDetails.forEach(({ record }) => {
+    const firstExcludentDesertionByParticipant = new Map<string, AttendanceRecord>();
+    [...filteredAttendance]
+      .sort((a, b) => a.dia - b.dia)
+      .forEach((record) => {
+        if (
+          record.dia >= 2 &&
+          record.dia <= 10 &&
+          isExcludentDesertion(record) &&
+          !firstExcludentDesertionByParticipant.has(record.participant_id)
+        ) {
+          firstExcludentDesertionByParticipant.set(record.participant_id, record);
+        }
+      });
+
+    firstExcludentDesertionByParticipant.forEach((record) => {
       const motivo = record.motivo_desercion || 'Sin motivo especificado';
       motivosCounts[motivo] = (motivosCounts[motivo] || 0) + 1;
     });
@@ -369,7 +403,7 @@ export default function Dashboard({
       value: motivosCounts[motivo],
       color: colors[index % colors.length]
     })).sort((a, b) => b.value - a.value);
-  }, [desertionDetails]);
+  }, [filteredAttendance]);
 
   const desercionesPorMotivoTotal = useMemo(
     () => desercionesPorMotivo.reduce((sum, item) => sum + item.value, 0),
@@ -419,21 +453,21 @@ export default function Dashboard({
       const bucket = weekBuckets.get(week.name);
       if (!bucket) return;
 
-      bucket.Cargados += participants.filter(
+      bucket.Cargados += filteredParticipants.filter(
         (participant) => participant.training_session_id === session.id,
       ).length;
-      const sessionParts = participants.filter((participant) => participant.training_session_id === session.id);
-      const sessionPartIds = new Set(sessionParts.map((participant) => participant.id));
+      const sessionParts = filteredParticipants.filter((participant) => participant.training_session_id === session.id);
+      const sessionPartIds = new Set<string>(sessionParts.map((participant) => participant.id));
       const phase = calculatePhaseMetrics(sessionPartIds, filteredAttendance, filteredConfirmations);
       bucket['Cierre Capacitación'] += phase.d5Ids.size;
       bucket['Cierre OJT'] += phase.d10Ids.size;
-      bucket.Altas += phase.confirmedAltaIds.size;
+      bucket.Altas += phase.d10Ids.size;
     });
 
     return Array.from(weekBuckets.values())
       .sort((a, b) => a.sortKey - b.sortKey)
       .map(({ sortKey: _sortKey, ...bucket }) => bucket);
-  }, [filteredSessions, participants, filteredAttendance, filteredConfirmations]);
+  }, [filteredSessions, filteredParticipants, filteredAttendance, filteredConfirmations]);
 
   return (
     <div className="space-y-6" id="dashboard-container">
@@ -547,6 +581,18 @@ export default function Dashboard({
               </div>
             )}
 
+            <div className="flex items-end">
+              <button
+                type="button"
+                aria-pressed={excludeExcludentes}
+                onClick={() => setExcludeExcludentes((current) => !current)}
+                className={`w-full sm:w-auto h-9 rounded-lg text-xs px-3 py-2 flex items-center justify-center gap-1.5 transition-colors font-medium cursor-pointer ${excludeExcludentes ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'}`}
+              >
+                <UserX className="w-3.5 h-3.5" />
+                Excluyentes
+              </button>
+            </div>
+
             {/* Reset */}
             <div className="flex items-end">
               <button
@@ -565,9 +611,9 @@ export default function Dashboard({
         <MonthlyTrainingView
           month={filterMes}
           sessions={filteredSessions}
-          participants={participants}
-          attendance={attendance}
-          confirmations={validConfirmations}
+          participants={filteredParticipants}
+          attendance={filteredAttendance}
+          confirmations={filteredConfirmations}
           onViewDetail={onViewDetail}
         />
       )}
@@ -649,7 +695,7 @@ export default function Dashboard({
             <div>
               <p className="text-slate-400 font-medium text-xs uppercase tracking-wider">Altas</p>
               <h3 className="text-slate-900 text-3xl font-black mt-1">{metrics.altasConfirmadas}</h3>
-              <p className="text-xs text-emerald-600 font-medium mt-1">Participaron en OJT y tienen alta confirmada</p>
+              <p className="text-xs text-emerald-600 font-medium mt-1">Postulantes que llegaron al Día 10</p>
             </div>
             <div className="bg-emerald-50 rounded-xl p-2.5 text-emerald-600 border border-emerald-100">
               <UserCheck className="w-5 h-5" />
