@@ -35,6 +35,7 @@ import {
   updateProspect,
 } from '../services/firebase/prospectService';
 import { isSessionAssignedTrainer } from '../utils/trainingAssignments';
+import CampaignMultiSelect from './CampaignMultiSelect';
 
 interface ProspectosProps {
   currentUser: User;
@@ -152,7 +153,7 @@ export default function Prospectos({ currentUser, users, sessions }: ProspectosP
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  const [campaignFilter, setCampaignFilter] = useState('todas');
+  const [campaignFilters, setCampaignFilters] = useState<string[]>([]);
   const [trainerFilter, setTrainerFilter] = useState('todos');
   const [startDateFilter, setStartDateFilter] = useState('');
   const [endDateFilter, setEndDateFilter] = useState('');
@@ -212,25 +213,25 @@ export default function Prospectos({ currentUser, users, sessions }: ProspectosP
   }, [prospects, trainers]);
   const sessionOptions = useMemo(() => sessions
     .filter((session) => {
-      if (campaignFilter !== 'todas' && normalizedKey(session.campaña) !== normalizedKey(campaignFilter)) return false;
+      if (campaignFilters.length > 0 && !campaignFilters.some((campaign) => normalizedKey(session.campaña) === normalizedKey(campaign))) return false;
       if (trainerFilter !== 'todos' && !isSessionAssignedTrainer(session, trainerFilter)) return false;
       return true;
     })
-    .sort((a, b) => b.fecha_inicio.localeCompare(a.fecha_inicio)), [sessions, campaignFilter, trainerFilter]);
+    .sort((a, b) => b.fecha_inicio.localeCompare(a.fecha_inicio)), [sessions, campaignFilters, trainerFilter]);
 
   const sessionCodeOptions = useMemo(() => {
     const prospectCodes = prospects
-      .filter((prospect) => campaignFilter === 'todas' || normalizedKey(prospect.campana) === normalizedKey(campaignFilter))
+      .filter((prospect) => campaignFilters.length === 0 || campaignFilters.some((campaign) => normalizedKey(prospect.campana) === normalizedKey(campaign)))
       .filter((prospect) => trainerFilter === 'todos' || prospect.formador_id === trainerFilter)
       .map((prospect) => prospect.training_session_code)
       .filter((code): code is string => Boolean(code));
     return Array.from(new Set([...sessionOptions.map(getSessionCode), ...prospectCodes])).sort();
-  }, [sessionOptions, prospects, campaignFilter, trainerFilter]);
+  }, [sessionOptions, prospects, campaignFilters, trainerFilter]);
 
   const filteredProspects = useMemo(() => {
     const term = search.trim().toLocaleLowerCase('es');
     return prospects.filter((prospect) => {
-      if (campaignFilter !== 'todas' && normalizedKey(prospect.campana) !== normalizedKey(campaignFilter)) return false;
+      if (campaignFilters.length > 0 && !campaignFilters.some((campaign) => normalizedKey(prospect.campana) === normalizedKey(campaign))) return false;
       if (trainerFilter !== 'todos' && prospect.formador_id !== trainerFilter) return false;
       if (startDateFilter && prospect.fecha_registro < startDateFilter) return false;
       if (endDateFilter && prospect.fecha_registro > endDateFilter) return false;
@@ -250,7 +251,7 @@ export default function Prospectos({ currentUser, users, sessions }: ProspectosP
         prospect.telefono,
       ].some((value) => String(value || '').toLocaleLowerCase('es').includes(term));
     });
-  }, [prospects, search, campaignFilter, trainerFilter, startDateFilter, endDateFilter, sessionFilter, sessions]);
+  }, [prospects, search, campaignFilters, trainerFilter, startDateFilter, endDateFilter, sessionFilter, sessions]);
 
   const lastFiveDays = useMemo(
     () => Array.from(new Set(filteredProspects.map((prospect) => prospect.fecha_registro).filter(Boolean)))
@@ -298,7 +299,7 @@ export default function Prospectos({ currentUser, users, sessions }: ProspectosP
     });
 
     const visibleCampaigns = campaignOptions
-      .filter((campaign) => campaignFilter === 'todas' || campaign === campaignFilter);
+      .filter((campaign) => campaignFilters.length === 0 || campaignFilters.some((selected) => normalizedKey(campaign) === normalizedKey(selected)));
     return {
       executiveData: Array.from(executives.values())
         .map((row) => ({ ...row, conversion: row.prospectos ? Math.round((row.ventas / row.prospectos) * 100) : 0 }))
@@ -312,7 +313,7 @@ export default function Prospectos({ currentUser, users, sessions }: ProspectosP
         };
       }),
     };
-  }, [filteredProspects, campaignOptions, campaignFilter]);
+  }, [filteredProspects, campaignOptions, campaignFilters]);
 
   const openCreate = () => {
     setEditing(null);
@@ -368,7 +369,7 @@ export default function Prospectos({ currentUser, users, sessions }: ProspectosP
     .sort((a, b) => b.fecha_inicio.localeCompare(a.fecha_inicio)), [sessions, form.campana, form.formador_id, currentUser.rol, editing]);
 
   const clearFilters = () => {
-    setCampaignFilter('todas');
+    setCampaignFilters([]);
     setTrainerFilter('todos');
     setStartDateFilter('');
     setEndDateFilter('');
@@ -480,7 +481,7 @@ export default function Prospectos({ currentUser, users, sessions }: ProspectosP
           </label>
           <label className="space-y-1">
             <span className="text-[10px] font-black uppercase text-slate-500">Campaña</span>
-            <select value={campaignFilter} onChange={(event) => { setCampaignFilter(event.target.value); setSessionFilter('todas'); }} className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-xs text-slate-700 outline-none focus:border-indigo-400"><option value="todas">Todas las campañas</option>{campaignOptions.map((campaign) => <option key={campaign} value={campaign}>{campaign}</option>)}</select>
+            <CampaignMultiSelect options={campaignOptions} selected={campaignFilters} onChange={(campaigns) => { setCampaignFilters(campaigns); setSessionFilter('todas'); }} allLabel="Todas las campañas" summaryClassName="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-xs text-slate-700 outline-none focus:border-indigo-400" />
           </label>
           <label className="space-y-1">
             <span className="text-[10px] font-black uppercase text-slate-500">Formador</span>

@@ -47,6 +47,7 @@ import {
 import { BPO_CAMPAIGNS } from '../constants/campaigns';
 import MonthlyTrainingView from './MonthlyTrainingView';
 import { getSessionTrainerIds, isSessionAssignedTrainer } from '../utils/trainingAssignments';
+import CampaignMultiSelect from './CampaignMultiSelect';
 
 interface DashboardProps {
   sessions: TrainingSession[];
@@ -128,7 +129,7 @@ export default function Dashboard({
   onViewDetail,
 }: DashboardProps) {
   // Filters state
-  const [filterCampaña, setFilterCampaña] = useState<string>('todos');
+  const [filterCampañas, setFilterCampañas] = useState<string[]>([]);
   const [filterFormador, setFilterFormador] = useState<string>('todos');
   const [filterGeneracion, setFilterGeneracion] = useState<string>('todos');
   const [filterFechaInicio, setFilterFechaInicio] = useState<string>('');
@@ -148,10 +149,10 @@ export default function Dashboard({
   }, [sessions, currentUser]);
 
   const campaignScopedSessions = useMemo(
-    () => filterCampaña === 'todos'
+    () => filterCampañas.length === 0
       ? roleScopedSessions
-      : roleScopedSessions.filter((session) => session.campaña === filterCampaña),
-    [roleScopedSessions, filterCampaña],
+      : roleScopedSessions.filter((session) => filterCampañas.includes(session.campaña)),
+    [roleScopedSessions, filterCampañas],
   );
 
   const scopedTrainerIds = useMemo(
@@ -172,8 +173,8 @@ export default function Dashboard({
     )).sort().reverse(),
   }), [roleScopedSessions, campaignScopedSessions]);
 
-  const handleCampaignChange = (campaign: string) => {
-    setFilterCampaña(campaign);
+  const handleCampaignChange = (campaigns: string[]) => {
+    setFilterCampañas(campaigns);
     setFilterFormador('todos');
     setFilterGeneracion('todos');
     setFilterMes('');
@@ -182,7 +183,7 @@ export default function Dashboard({
 
   // Reset Filters
   const handleResetFilters = () => {
-    setFilterCampaña('todos');
+    setFilterCampañas([]);
     setFilterFormador('todos');
     setFilterGeneracion('todos');
     setFilterFechaInicio('');
@@ -194,7 +195,7 @@ export default function Dashboard({
   // Filtered Sessions
   const filteredSessions = useMemo(() => {
     return roleScopedSessions.filter(s => {
-      if (filterCampaña !== 'todos' && s.campaña !== filterCampaña) return false;
+      if (filterCampañas.length > 0 && !filterCampañas.includes(s.campaña)) return false;
       if (filterFormador !== 'todos' && !getSessionTrainerIds(s).includes(filterFormador)) return false;
       if (filterGeneracion !== 'todos' && (s.generation_code || s.nombre_generacion) !== filterGeneracion) return false;
       if (filterFechaInicio && (s.fecha_fin || s.fecha_inicio) < filterFechaInicio) return false;
@@ -203,7 +204,7 @@ export default function Dashboard({
       if (filterMes && filterEstado !== 'todos' && getTrainingTemporalStatus(s) !== filterEstado) return false;
       return true;
     });
-  }, [roleScopedSessions, filterCampaña, filterFormador, filterGeneracion, filterFechaInicio, filterFechaFin, filterMes, filterEstado]);
+  }, [roleScopedSessions, filterCampañas, filterFormador, filterGeneracion, filterFechaInicio, filterFechaFin, filterMes, filterEstado]);
 
   const filteredSessionIds = useMemo(() => new Set(filteredSessions.map(s => s.id)), [filteredSessions]);
   // Filtered Participants
@@ -286,7 +287,7 @@ export default function Dashboard({
 
   // 2. Comparativo por Campaña
   const campañaData = useMemo(() => {
-    const campaigns = filterCampaña === 'todos' ? BPO_CAMPAIGNS : [filterCampaña];
+    const campaigns = filterCampañas.length === 0 ? BPO_CAMPAIGNS : filterCampañas;
     return campaigns.map(camp => {
       const campSessions = filteredSessions.filter(s => s.campaña === camp);
       const campSessionIds = new Set(campSessions.map(s => s.id));
@@ -307,7 +308,7 @@ export default function Dashboard({
         'Deserción Final %': phase.desercionFinalRate,
       };
     });
-  }, [filteredSessions, participants, attendance, validConfirmations, filterCampaña]);
+  }, [filteredSessions, participants, attendance, validConfirmations, filterCampañas]);
 
   // 3. Comparativo por Formador
   const formadorData = useMemo(() => {
@@ -447,16 +448,13 @@ export default function Dashboard({
             {/* Campaña */}
             <div>
               <label className="block text-xs font-medium text-slate-500 mb-1">Campaña</label>
-              <select
-                value={filterCampaña}
-                onChange={(e) => handleCampaignChange(e.target.value)}
-                className="w-full text-xs glass-input text-slate-700 rounded-lg p-2 outline-hidden"
-              >
-                <option value="todos">Todas las Campañas</option>
-                {filterOptions.campañas.map((campaña) => (
-                  <option key={campaña} value={campaña}>{campaña}</option>
-                ))}
-              </select>
+              <CampaignMultiSelect
+                options={filterOptions.campañas}
+                selected={filterCampañas}
+                onChange={handleCampaignChange}
+                allLabel="Todas las Campañas"
+                summaryClassName="w-full text-xs glass-input text-slate-700 rounded-lg p-2 outline-hidden"
+              />
             </div>
 
             {/* Generación */}
