@@ -660,8 +660,8 @@ export default function Capacitaciones({
       suggestedCampaña = 'Entel Empresas RUC 20';
     } else if (uppercaseFileName.includes('ENTEL EMPRESAS')) {
       suggestedCampaña = BPO_CAMPAIGNS[0];
-    } else if (uppercaseFileName.includes('FIJA')) {
-      suggestedCampaña = 'Fija';
+    } else if (uppercaseFileName.includes('EQUIFAX')) {
+      suggestedCampaña = 'Equifax';
     } else if (uppercaseFileName.includes('GPON')) {
       suggestedCampaña = 'GPON';
     } else if (uppercaseFileName.includes('CULQI')) {
