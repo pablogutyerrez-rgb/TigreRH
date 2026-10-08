@@ -176,15 +176,15 @@ export const calculateTrainingVariableFromData = async (
   ));
   const dayOneCount = phases.reduce((sum, phase) => sum + phase.d1Ids.size, 0);
   const finalDayCount = phases.reduce((sum, phase) => sum + phase.d10Ids.size, 0);
-  const retention = 100 - phases.reduce((sum, phase) => sum + phase.desercionFinalRate, 0) / phases.length;
   const altasOperacion = new Set([
     ...confirmations
-      .filter((record) => selectedIdSet.has(normalizeText(record.training_session_id)) && normalizeText(record.estado_alta) === 'Alta confirmada')
+      .filter((record) => selectedIdSet.has(normalizeText(record.training_session_id)) && !record.isDeleted && normalizeText(record.estado_alta) === 'Alta confirmada')
       .map((record) => normalizeText(record.participant_id)),
     ...selectedParticipants
       .filter((participant) => normalizeText(participant.estado_alta) === 'Alta confirmada' || normalizeText(participant.estado_final) === 'Alta confirmada')
       .map((participant) => participant.id),
   ].filter(Boolean));
+  const retention = dayOneCount > 0 ? altasOperacion.size / dayOneCount * 100 : 0;
   const ventasReales = selectedParticipants.reduce((total, participant) => {
     const ventas = Number(participant.ventas_ojt);
     return total + (Number.isFinite(ventas) && ventas > 0 ? ventas : 0);

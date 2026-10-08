@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { calculateTrainingVariableEvaluation as backend } from '../../backend/src/services/trainingVariableCalculator';
 import { calculateTrainingVariablePreview as preview } from './trainingVariableCalculator';
 import { calculateTrainingVariableFromData } from '../../backend/src/services/trainingVariableSourceService';
+import { normalizeTerminations } from '../../backend/src/services/rotationService';
 import { prospectComparison, campaignKey, filterProspectRecords } from './prospectMetrics';
 import { buildTrainingWorkbook, TRAINING_EXPORT_HEADERS } from './trainingExport';
 import * as XLSX from 'xlsx';
@@ -27,9 +28,12 @@ const data = {
   ],
   participants: [{ id: 'p', training_session_id: 'a', ventas_ojt: 1 }, { id: 'q', training_session_id: 'a' }, { id: 'r', training_session_id: 'b', ventas_ojt: 0 }],
   attendance: [
+    { id: '0', training_session_id: 'a', participant_id: 'p', dia: 1, estado_asistencia: 'Asistió' },
+    { id: '0a', training_session_id: 'a', participant_id: 'q', dia: 1, estado_asistencia: 'Tardanza' },
     { id: '1', training_session_id: 'a', participant_id: 'p', dia: 2, estado_asistencia: 'Asistió' },
     { id: '2', training_session_id: 'a', participant_id: 'q', dia: 2, estado_asistencia: 'Tardanza' },
     { id: '3', training_session_id: 'a', participant_id: 'p', dia: 10, estado_asistencia: 'Asistió' },
+    { id: '3a', training_session_id: 'b', participant_id: 'r', dia: 1, estado_asistencia: 'Asistió' },
     { id: '4', training_session_id: 'b', participant_id: 'r', dia: 2, estado_asistencia: 'Asistió' },
     { id: '5', training_session_id: 'b', participant_id: 'r', dia: 10, estado_asistencia: 'Asistió' },
   ],
@@ -41,7 +45,7 @@ test('multiseleccion usa datos OJT reales y no duplica', async () => {
   const sourceData = { ...data, rotation: { disponible: true, porcentaje: 5, bajas: 1, dotacion: 20 } };
   const result = await calculateTrainingVariableFromData('f', ['a', 'b', 'a'], 2026, 9, sourceData, { meses: [9, 10], formador_ids: ['f', 'g'] });
   assert.deepEqual(result.generation_ids, ['a', 'b']);
-  assert.equal(result.porcentaje_retencion, 75);
+  assert.equal(result.porcentaje_retencion, 66.67);
   assert.equal(result.porcentaje_produccion_grupal, 50);
   assert.equal(result.porcentaje_satisfaccion, 95);
   assert.equal(result.detalle.altas_operacion, 2);
@@ -50,6 +54,18 @@ test('multiseleccion usa datos OJT reales y no duplica', async () => {
   await assert.rejects(() => calculateTrainingVariableFromData('f', ['b'], 2026, 9, sourceData), /formador/);
   await assert.rejects(() => calculateTrainingVariableFromData('g', ['b'], 2026, 9, sourceData), /periodo/);
   await assert.rejects(() => calculateTrainingVariableFromData('g', ['b'], 2026, 10, sourceData, { campanas: ['Culqi'] }), /campañas/);
+});
+test('importa bajas desde BASE con fechas seriales y DNI numérico', () => {
+  const rows = normalizeTerminations([{
+    CIUDAD: 'Lima', POSICIÓN: 'Asesor', ALTA: 45292, DNI: 130365, 'NOMBRE Y APELLIDOS': 'Marcos Capusari',
+    'CAMPAÑA': 'Culqi', CESE: 45292, MOTIVO: 'Renuncia', PERMANENCIA: 10,
+  }]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].fecha, '2024-01-01');
+  assert.equal(rows[0].fecha_alta, '2024-01-01');
+  assert.equal(rows[0].dni, '130365');
+  assert.equal(rows[0].nombre, 'Marcos Capusari');
+  assert.throws(() => normalizeTerminations([{ DNI: '1', CESE: 45292 }]), /Fila 2: falta CAMPAÑA/);
 });
 test('comparacion cuenta ventas sin limite de fechas y deduplica ejecutivos', () => {
   const prospects = Array.from({ length: 12 }, (_, i) => ({ id: String(i), campana: 'Culqi', training_session_id: 'a',

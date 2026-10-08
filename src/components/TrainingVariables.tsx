@@ -743,7 +743,7 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                     meta={currentFormula ? "Meta 50%" : "Meta 70%"}
                     guide={{
                       measures: 'Mide la capacidad del formador para lograr que los participantes culminen la capacitación y pasen a operación.',
-                      input: currentFormula ? '100% menos el promedio de deserción del Dashboard. Meta 50%.' : 'Ingresa el porcentaje mensual de retención obtenido. La meta de referencia es 70%; si el valor supera 70%, genera sobrecumplimiento.',
+                      input: currentFormula ? 'Altas efectivas a operación divididas entre participantes iniciales del Día 1. Meta 50%.' : 'Ingresa el porcentaje mensual de retención obtenido. La meta de referencia es 70%; si el valor supera 70%, genera sobrecumplimiento.',
                     }}
                   >
                     <PercentInput label="Retención obtenida" value={form.porcentaje_retencion} disabled={isReadOnly} onChange={(value) => updateForm('porcentaje_retencion', value)} />

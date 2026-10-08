@@ -6,7 +6,18 @@ export type RotationFilters = { campaigns?: string[]; years?: number[]; periods?
 
 const normalize = (value: unknown) => String(value ?? '').trim();
 const key = (value: unknown) => normalize(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
-const day = (value: unknown) => normalize(value).slice(0, 10);
+const day = (value: unknown) => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const date = new Date(Date.UTC(1899, 11, 30) + Math.round(value * 86400000));
+    return date.toISOString().slice(0, 10);
+  }
+  const raw = normalize(value);
+  const iso = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/.exec(raw);
+  if (iso) return `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
+  const latin = /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/.exec(raw);
+  if (latin) return `${latin[3]}-${latin[2].padStart(2, '0')}-${latin[1].padStart(2, '0')}`;
+  return raw.slice(0, 10);
+};
 const hash = (type: string, values: unknown[]) => createHash('sha256').update(JSON.stringify([type, ...values])).digest('hex').slice(0, 32);
 const monthKey = (value: unknown) => {
   const raw = normalize(value);
@@ -18,6 +29,10 @@ const text = (row: Record<string, unknown>, names: string[]) => {
   const found = entries.find(([header]) => names.includes(key(header)));
   return normalize(found?.[1]);
 };
+const value = (row: Record<string, unknown>, names: string[]) => {
+  const found = Object.entries(row).find(([header]) => names.includes(key(header)));
+  return found?.[1];
+};
 const number = (value: unknown) => {
   const parsed = Number(String(value ?? '').replace(/,/g, '').trim());
   return Number.isFinite(parsed) ? parsed : NaN;
@@ -26,7 +41,7 @@ const isWithin = (value: string, from?: string, to?: string) =>
   (!from || value >= from) && (!to || value <= to);
 
 export type RotationTermination = {
-  id: string; fecha: string; campana: string; dni: string; nombre: string; motivo: string; tipo: string;
+  id: string; fecha: string; fecha_alta: string; campana: string; dni: string; nombre: string; motivo: string; tipo: string;
   raw: Record<string, unknown>; imported_at: string; imported_by: string;
 };
 export type RotationHeadcount = {
@@ -34,17 +49,19 @@ export type RotationHeadcount = {
   raw: Record<string, unknown>; imported_at: string; imported_by: string;
 };
 
-export const normalizeTerminations = (rows: Record<string, unknown>[]) => rows.map((raw) => {
-  const fecha = day(text(raw, ['fecha', 'fechabaja', 'fechacese', 'fechadebaja']));
+export const normalizeTerminations = (rows: Record<string, unknown>[]) => rows.map((raw, index) => {
+  const fecha = day(value(raw, ['fecha', 'cese', 'fechabaja', 'fechacese', 'fechadebaja']));
+  const fecha_alta = day(value(raw, ['alta', 'fechaalta', 'fechaingreso', 'fechaingresolaboral']));
   const campana = text(raw, ['campana', 'campaña']);
   const dni = text(raw, ['dni', 'documento', 'numerodocumento', 'numerodedocumento']);
-  const nombre = text(raw, ['nombre', 'nombres', 'colaborador', 'trabajador', 'nombrecompleto']);
+  const nombre = text(raw, ['nombre', 'nombres', 'nombreyapellidos', 'colaborador', 'trabajador', 'nombrecompleto']);
   const motivo = text(raw, ['motivo', 'motivobaja', 'motivocese', 'causal']);
   const tipo = text(raw, ['tipo', 'tipobaja', 'tipocese']);
   if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !campana || (!dni && !nombre)) {
-    throw new Error('Cada baja requiere fecha válida, campaña y DNI o nombre.');
+    const missing = [!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha) ? 'CESE/fecha válida' : '', !campana ? 'CAMPAÑA' : '', !dni && !nombre ? 'DNI o NOMBRE Y APELLIDOS' : ''].filter(Boolean);
+    throw new Error(`Fila ${index + 2}: falta ${missing.join(', ')}.`);
   }
-  return { id: hash('termination', [fecha, campana, dni || nombre, motivo, tipo]), fecha, campana, dni, nombre, motivo, tipo, raw };
+  return { id: hash('termination', [fecha, campana, dni || nombre, motivo, tipo]), fecha, fecha_alta: /^\d{4}-\d{2}-\d{2}$/.test(fecha_alta) ? fecha_alta : '', campana, dni, nombre, motivo, tipo, raw };
 });
 
 export const normalizeHeadcounts = (rows: Record<string, unknown>[]) => rows.map((raw) => {
@@ -144,4 +161,3 @@ export const getRotationRateForEvaluation = async (filters: { campaigns?: string
   if (!dashboard.total_dotacion) return { disponible: false, porcentaje: null, bajas: dashboard.total_bajas, dotacion: 0 };
   return { disponible: true, porcentaje: dashboard.porcentaje_rotacion, bajas: dashboard.total_bajas, dotacion: dashboard.total_dotacion };
 };
-

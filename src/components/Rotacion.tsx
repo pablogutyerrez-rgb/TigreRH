@@ -8,9 +8,11 @@ import { getRotationDashboard, saveRotationRows, type RotationDashboard } from '
 interface RotacionProps { currentUser: User; }
 const todayYear = new Date().getFullYear();
 const emptyData: RotationDashboard = { terminations: [], headcounts: [], total_bajas: 0, total_dotacion: 0, porcentaje_rotacion: null, by_campaign: [], motivos: [], tipos: [], fechas: [] };
-const parseWorkbook = async (file: File) => {
-  const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+const parseWorkbook = async (file: File, type: 'bajas' | 'dotacion') => {
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
+  const baseName = workbook.SheetNames.find((name) => name.trim().toUpperCase() === 'BASE');
+  if (type === 'bajas' && !baseName) throw new Error('El archivo de bajas debe contener la hoja BASE.');
+  const sheet = workbook.Sheets[baseName || workbook.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
   if (!rows.length) throw new Error('El archivo no contiene filas para importar.');
   return rows;
@@ -48,7 +50,7 @@ export default function Rotacion({ currentUser }: RotacionProps) {
   const stage = async (type: 'bajas' | 'dotacion', file?: File) => {
     if (!file) return;
     setError(''); setMessage('');
-    try { const rows = await parseWorkbook(file); type === 'bajas' ? setPendingBajas(rows) : setPendingDotacion(rows); }
+    try { const rows = await parseWorkbook(file, type); type === 'bajas' ? setPendingBajas(rows) : setPendingDotacion(rows); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudo leer el Excel.'); }
   };
   const save = async () => {
