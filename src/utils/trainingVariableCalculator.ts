@@ -66,15 +66,15 @@ const calculateCurrentVariable = (input: TrainingVariableCalculationInput) => {
   if (values.some((value) => !Number.isFinite(value) || value < 0 || value > 100)) {
     throw new Error('Los resultados deben estar entre 0 y 100%.');
   }
-  if (rotation == null || !Number.isFinite(rotation) || rotation < 0 || rotation > 10) {
-    throw new Error('Ingresa rotación entre 0 y 10%. Para valores superiores falta definir la regla.');
+  if (rotation == null || !Number.isFinite(rotation) || rotation < 0 || rotation > 100) {
+    throw new Error('La rotación debe estar entre 0 y 100%.');
   }
   const retention = Math.min(10000, divideRound(toBasisPoints(input.porcentaje_retencion) * 10000, 5000));
   const satisfaction = Math.min(10000, divideRound(toBasisPoints(input.porcentaje_satisfaccion) * 10000, 9000));
   const r = divideRound(retention * 3000, 10000);
   const p = divideRound(toBasisPoints(input.porcentaje_produccion_grupal) * 5000, 10000);
   const s = divideRound(satisfaction * 1000, 10000);
-  const rotationPoints = toBasisPoints(rotation);
+  const rotationPoints = toBasisPoints(Math.min(rotation, 10));
   const total = r + p + s + rotationPoints;
   return {
     cumplimiento_retencion: fromBasisPoints(retention), aporte_retencion: fromBasisPoints(r),

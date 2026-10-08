@@ -13,6 +13,7 @@ import { selectionRoutes } from './routes/selectionRoutes.js';
 import { surveyRoutes } from './routes/surveyRoutes.js';
 import { trainingRoutes } from './routes/trainingRoutes.js';
 import { trainingVariableRoutes } from './routes/trainingVariableRoutes.js';
+import { rotationRoutes } from './routes/rotationRoutes.js';
 import { userRoutes } from './routes/userRoutes.js';
 import { getPostgresPool } from './postgres.js';
 import { ensureHybridSchema } from './hybridDb.js';
@@ -110,6 +111,7 @@ app.use('/api', (req, res, next) => {
     : path.startsWith('/surveys') ? 'formacion:encuestas'
     : path.startsWith('/prospects') ? 'formacion:prospectos'
     : path.startsWith('/formacion/variables') ? 'formacion:variables'
+    : path.startsWith('/formacion/rotacion') ? 'formacion:rotacion'
     : path.startsWith('/users') ? 'administrador:usuarios'
     : path.includes('/selection/requisitions/') && path.endsWith('/assign-training') ? 'seleccion:asignacion'
     : path.startsWith('/selection/applicants/') || path.includes('/applicants') ? 'seleccion:postulantes'
@@ -137,6 +139,7 @@ app.use('/api/selection', selectionRoutes);
 app.use('/api/surveys', surveyRoutes);
 app.use('/api/trainings', trainingRoutes);
 app.use('/api/formacion/variables', trainingVariableRoutes);
+app.use('/api/formacion/rotacion', rotationRoutes);
 app.use('/api/users', userRoutes);
 
 app.use((

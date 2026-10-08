@@ -1,5 +1,6 @@
 import { calculatePhaseMetrics } from './trainingPhaseMetrics.js';
 import { dataDb as adminDb } from '../hybridDb.js';
+import { getRotationRateForEvaluation } from './rotationService.js';
 
 type StoredRecord = Record<string, unknown> & { id: string };
 
@@ -19,12 +20,19 @@ export interface AutomaticTrainingVariableResult {
   porcentaje_produccion_individual: number;
   porcentaje_produccion_grupal: number;
   porcentaje_satisfaccion: number;
+  porcentaje_rotacion: number;
   detalle: {
     participantes_dia_1: number;
     participantes_dia_final: number;
     prospectos_generados: number;
     prospectos_venta_alta: number;
     respuestas_encuesta: number;
+    altas_operacion: number;
+    ventas_reales: number;
+    productividad_disponible: boolean;
+    rotacion_disponible: boolean;
+    bajas_rotacion: number;
+    dotacion_rotacion: number;
   };
 }
 
@@ -118,26 +126,26 @@ export const calculateTrainingVariableFromSources = async (
   const selectedIds = Array.from(new Set(generationIds.map(normalizeText).filter(Boolean)));
   if (!selectedIds.length) throw new Error('Selecciona una capacitación para calcular la variable.');
 
-  const [sessions, participants, attendance, prospects, surveys, responses] = await Promise.all([
+  const [sessions, participants, attendance, surveys, responses, confirmations] = await Promise.all([
     readCollection('sessions'),
     readCollection('participants'),
     readCollection('attendance'),
-    readCollection('prospects'),
     readCollection('surveys'),
     readCollection('responses'),
+    readCollection('confirmations'),
   ]);
 
-  return calculateTrainingVariableFromData(trainerId, selectedIds, year, month, { sessions, participants, attendance, prospects, surveys, responses }, filters);
+  return calculateTrainingVariableFromData(trainerId, selectedIds, year, month, { sessions, participants, attendance, surveys, responses, confirmations }, filters);
 };
 
-export const calculateTrainingVariableFromData = (
+export const calculateTrainingVariableFromData = async (
   trainerId: string, generationIds: string[], year: number, month: number,
-  data: { sessions: StoredRecord[]; participants: StoredRecord[]; attendance: StoredRecord[]; prospects: StoredRecord[]; surveys: StoredRecord[]; responses: StoredRecord[] },
+  data: { sessions: StoredRecord[]; participants: StoredRecord[]; attendance: StoredRecord[]; surveys: StoredRecord[]; responses: StoredRecord[]; confirmations: StoredRecord[]; rotation?: { disponible: boolean; porcentaje: number | null; bajas: number; dotacion: number } },
   filters?: { meses?: number[]; formador_ids?: string[]; campanas?: string[] },
-): AutomaticTrainingVariableResult => {
+): Promise<AutomaticTrainingVariableResult> => {
   const selectedIds = [...new Set(generationIds)];
   if (!selectedIds.length) throw new Error('Selecciona al menos una capacitación.');
-  const { sessions, participants, attendance, prospects, surveys, responses } = data;
+  const { sessions, participants, attendance, surveys, responses, confirmations } = data;
   const sessionById = new Map(sessions.map((session) => [session.id, session]));
   const selectedSessions = selectedIds.map((id) => sessionById.get(id));
   if (selectedSessions.some((session) => !session)) throw new Error('Uno de los códigos seleccionados ya no existe.');
@@ -169,24 +177,20 @@ export const calculateTrainingVariableFromData = (
   const dayOneCount = phases.reduce((sum, phase) => sum + phase.d1Ids.size, 0);
   const finalDayCount = phases.reduce((sum, phase) => sum + phase.d10Ids.size, 0);
   const retention = 100 - phases.reduce((sum, phase) => sum + phase.desercionFinalRate, 0) / phases.length;
-  const sessionProspects = new Map(validSessions.map((session) => [session.id, [] as StoredRecord[]]));
-  for (const prospect of prospects) {
-    const sessionId = normalizeText(prospect.training_session_id), code = normalizeText(prospect.training_session_code);
-    const matches = validSessions.filter((session) => {
-      if (sessionId) return session.id === sessionId;
-      if (code) return sourceFromSession(session).codigo === code;
-      return normalizeCampaignKey(prospect.campana || prospect['campaña']) === normalizeCampaignKey(session.campana || session['campaña'])
-        && assignedTrainerIds(session).includes(normalizeText(prospect.formador_id))
-        && normalizeText(prospect.fecha_registro).slice(0, 10) >= normalizeText(session.fecha_inicio).slice(0, 10)
-        && normalizeText(prospect.fecha_registro).slice(0, 10) <= normalizeText(session.fecha_fin).slice(0, 10);
-    });
-    if (matches.length === 1) sessionProspects.get(matches[0].id)!.push(prospect);
-  }
-  const isSale = (p: StoredRecord) => ['venta', 'alta', 'ventaalta'].includes(normalizeStatusKey(p.estado));
-  const selectedProspects = [...sessionProspects.values()].flat();
-  const soldProspects = selectedProspects.filter(isSale);
-  const production = [...sessionProspects.values()].reduce((sum, records) =>
-    sum + (records.length ? records.filter(isSale).length / records.length * 100 : 0), 0) / validSessions.length;
+  const altasOperacion = new Set([
+    ...confirmations
+      .filter((record) => selectedIdSet.has(normalizeText(record.training_session_id)) && normalizeText(record.estado_alta) === 'Alta confirmada')
+      .map((record) => normalizeText(record.participant_id)),
+    ...selectedParticipants
+      .filter((participant) => normalizeText(participant.estado_alta) === 'Alta confirmada' || normalizeText(participant.estado_final) === 'Alta confirmada')
+      .map((participant) => participant.id),
+  ].filter(Boolean));
+  const ventasReales = selectedParticipants.reduce((total, participant) => {
+    const ventas = Number(participant.ventas_ojt);
+    return total + (Number.isFinite(ventas) && ventas > 0 ? ventas : 0);
+  }, 0);
+  const productivityAvailable = altasOperacion.size > 0;
+  const production = productivityAvailable ? Math.min(100, ventasReales / altasOperacion.size * 100) : 0;
 
   const selectedSurveyIds = new Set(
     surveys
@@ -204,6 +208,12 @@ export const calculateTrainingVariableFromData = (
     ? satisfactionScores.reduce((sum, value) => sum + value, 0) / satisfactionScores.length
     : 0;
 
+  const rotation = data.rotation || await getRotationRateForEvaluation({
+    campaigns: filters?.campanas?.length ? filters.campanas : validSessions.map((session) => normalizeText(session.campana || session['campaña'])),
+    year,
+    months: filters?.meses?.length ? filters.meses : [month],
+  });
+
   return {
     generation_ids: selectedIds,
     codigos_generacion: selectedCodes,
@@ -214,9 +224,16 @@ export const calculateTrainingVariableFromData = (
     detalle: {
       participantes_dia_1: dayOneCount,
       participantes_dia_final: finalDayCount,
-      prospectos_generados: selectedProspects.length,
-      prospectos_venta_alta: soldProspects.length,
+      prospectos_generados: 0,
+      prospectos_venta_alta: 0,
       respuestas_encuesta: selectedResponses.length,
+      altas_operacion: altasOperacion.size,
+      ventas_reales: ventasReales,
+      productividad_disponible: productivityAvailable,
+      rotacion_disponible: rotation.disponible,
+      bajas_rotacion: rotation.bajas,
+      dotacion_rotacion: rotation.dotacion,
     },
+    porcentaje_rotacion: rotation.porcentaje ?? 0,
   };
 };

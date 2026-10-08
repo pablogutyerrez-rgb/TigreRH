@@ -59,6 +59,7 @@ import PublicSurveyForm from './components/PublicSurveyForm';
 import Seleccion, { type SelectionViewMode } from './components/Seleccion';
 import TrainingVariables from './components/TrainingVariables';
 import Prospectos from './components/Prospectos';
+import Rotacion from './components/Rotacion';
 
 import { getPeruNow, formatPeruDate, isAttendanceWindowOpen } from './utils/time';
 import { permissions } from './utils/permissions';
@@ -159,6 +160,7 @@ const userHasModuleAccess = (user: User, area: UserArea, moduleId: string) => {
   if (userHasExplicitModuleAccess(user, area, moduleId)) return true;
   if (user.module_access && user.module_access.length > 0) return false;
   if (area === 'formacion' && moduleId === 'variables') return user.rol === 'Administrador';
+  if (area === 'formacion' && moduleId === 'rotacion') return user.rol === 'Administrador';
   if (area === 'formacion' && moduleId === 'prospectos') return ['Administrador', 'Formador'].includes(user.rol);
   if (area === 'formacion' && moduleId === 'reportes' && permissions[user.rol]?.canExportReports) return true;
   if (area === 'formacion' && moduleId === 'variables' && permissions[user.rol]?.canViewTrainingVariables) return true;
@@ -185,6 +187,7 @@ const getDefaultRouteForUser = (user: User): { currentView: string; selectionVie
     { area: 'formacion', moduleId: 'encuestas', currentView: 'encuestas' },
     { area: 'formacion', moduleId: 'prospectos', currentView: 'prospectos' },
     { area: 'formacion', moduleId: 'variables', currentView: 'variables' },
+    { area: 'formacion', moduleId: 'rotacion', currentView: 'rotacion' },
     { area: 'formacion', moduleId: 'reportes', currentView: 'reportes' },
     { area: 'administrador', moduleId: 'usuarios', currentView: 'usuarios' },
     { area: 'administrador', moduleId: 'reportes', currentView: 'reportes' },
@@ -217,6 +220,7 @@ const getFormationViewForUser = (user: User): string => {
     { moduleId: 'encuestas', currentView: 'encuestas' },
     { moduleId: 'prospectos', currentView: 'prospectos' },
     { moduleId: 'variables', currentView: 'variables' },
+    { moduleId: 'rotacion', currentView: 'rotacion' },
     { moduleId: 'reportes', currentView: 'reportes' },
   ];
   return formationRoutes.find(route => userHasModuleAccess(user, 'formacion', route.moduleId))?.currentView || 'capacitaciones';
@@ -2067,6 +2071,7 @@ export default function App() {
     (currentView === 'auditoria' && userHasModuleAccess(activeUser, 'administrador', 'auditoria')) ||
     (currentView === 'encuestas' && userHasModuleAccess(activeUser, 'formacion', 'encuestas')) ||
     (currentView === 'variables' && userHasModuleAccess(activeUser, 'formacion', 'variables')) ||
+    (currentView === 'rotacion' && userHasModuleAccess(activeUser, 'formacion', 'rotacion')) ||
     (currentView === 'prospectos' && userHasModuleAccess(activeUser, 'formacion', 'prospectos'))
   ) : false;
 
@@ -2303,6 +2308,7 @@ export default function App() {
                         items: [
                           ['prospectos', 'Prospectos', BriefcaseBusiness, ['Administrador', 'Formador']],
                           ['variables', 'Medición de Variables', Calculator, ['Administrador']],
+                          ['rotacion', 'Rotación', Calculator, ['Administrador']],
                         ],
                       },
                       {
@@ -2611,6 +2617,10 @@ export default function App() {
                   currentUser={activeUser}
                   users={users}
                 />
+              )}
+
+              {currentView === 'rotacion' && userHasModuleAccess(activeUser, 'formacion', 'rotacion') && (
+                <Rotacion currentUser={activeUser} />
               )}
 
               {currentView === 'prospectos' && userHasModuleAccess(activeUser, 'formacion', 'prospectos') && (

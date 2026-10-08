@@ -24,7 +24,7 @@ const router = Router();
 
 const inputSchema = z.object({
   formula_version: z.number().int().min(1).max(2).optional(),
-  porcentaje_rotacion: z.number().min(0).max(10).optional(),
+  porcentaje_rotacion: z.number().min(0).max(100).optional(),
   meses: z.array(z.number().int().min(1).max(12)).min(1).optional(),
   formador_ids: z.array(z.string().trim().min(1)).min(1).optional(),
   campanas: z.array(z.string().trim().min(1)).optional(),
@@ -48,6 +48,12 @@ const inputSchema = z.object({
     prospectos_generados: z.coerce.number().int().min(0),
     prospectos_venta_alta: z.coerce.number().int().min(0),
     respuestas_encuesta: z.coerce.number().int().min(0),
+    altas_operacion: z.coerce.number().int().min(0).optional(),
+    ventas_reales: z.coerce.number().min(0).optional(),
+    productividad_disponible: z.boolean().optional(),
+    rotacion_disponible: z.boolean().optional(),
+    bajas_rotacion: z.coerce.number().int().min(0).optional(),
+    dotacion_rotacion: z.coerce.number().int().min(0).optional(),
   }).optional(),
 });
 

@@ -341,6 +341,7 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
         porcentaje_produccion_individual: calculation.porcentaje_produccion_individual,
         porcentaje_produccion_grupal: calculation.porcentaje_produccion_grupal,
         porcentaje_satisfaccion: calculation.porcentaje_satisfaccion,
+        porcentaje_rotacion: calculation.porcentaje_rotacion,
         calculo_automatico: true,
         calculo_detalle: calculation.detalle,
       }));
@@ -361,8 +362,8 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
       'Participantes Día 1': evaluation.calculo_detalle?.participantes_dia_1 ?? '',
       'Participantes Día final': evaluation.calculo_detalle?.participantes_dia_final ?? '',
       'Retención obtenida (%)': evaluation.porcentaje_retencion,
-      'Prospectos generados': evaluation.calculo_detalle?.prospectos_generados ?? '',
-      'Prospectos Venta / Alta': evaluation.calculo_detalle?.prospectos_venta_alta ?? '',
+      'Altas a operación': evaluation.calculo_detalle?.altas_operacion ?? '',
+      'Ventas reales OJT': evaluation.calculo_detalle?.ventas_reales ?? '',
       'Producción individual (%)': evaluation.porcentaje_produccion_individual,
       'Producción grupal (%)': evaluation.porcentaje_produccion_grupal,
       'Respuestas de encuesta': evaluation.calculo_detalle?.respuestas_encuesta ?? '',
@@ -385,6 +386,8 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
     if (!form.generation_ids?.length) return 'Selecciona una capacitación.';
     if (!form.id_formador) return 'Selecciona un formador.';
     if (currentFormula && previewResult.error) return previewResult.error;
+    if (currentFormula && form.calculo_automatico && form.calculo_detalle?.productividad_disponible === false) return 'No hay altas a operación para calcular Productividad OJT.';
+    if (currentFormula && form.calculo_automatico && form.calculo_detalle?.rotacion_disponible === false) return 'No hay dotación cargada para calcular rotación.';
     if (form.porcentaje_retencion < 0 || form.porcentaje_retencion > 100) return 'La retención debe estar entre 0% y 100%.';
     if (form.porcentaje_produccion_individual < 0 || form.porcentaje_produccion_individual > 100) return 'La producción individual debe estar entre 0% y 100%.';
     if (form.porcentaje_produccion_grupal < 0) return 'La producción grupal debe ser igual o mayor a 0%.';
@@ -726,8 +729,8 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                     <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs md:grid-cols-5">
                       <ReadMetric label="Día 1" value={String(form.calculo_detalle.participantes_dia_1)} />
                       <ReadMetric label="Día final" value={String(form.calculo_detalle.participantes_dia_final)} />
-                      <ReadMetric label="Prospectos" value={String(form.calculo_detalle.prospectos_generados)} />
-                      <ReadMetric label="Venta / Alta" value={String(form.calculo_detalle.prospectos_venta_alta)} />
+                      <ReadMetric label="Altas a operación" value={String(form.calculo_detalle.altas_operacion ?? 0)} />
+                      <ReadMetric label="Ventas reales OJT" value={String(form.calculo_detalle.ventas_reales ?? 0)} />
                       <ReadMetric label="Encuestas" value={String(form.calculo_detalle.respuestas_encuesta)} />
                     </div>
                   )}
@@ -753,7 +756,7 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                     meta="Meta grupal 100%"
                     guide={{
                       measures: 'Mide el desempeño productivo durante OJT según el resultado mensual definido por el coordinador.',
-                      input: currentFormula ? 'Promedio de productividad de las capacitaciones seleccionadas. Meta 100%.' : 'Ingresa dos porcentajes: el individual solo sirve como referencia; el grupal se compara con la meta de 100% y calcula el aporte ponderado del KPI.',
+                      input: currentFormula ? 'Ventas reales OJT divididas entre altas a operación de las capacitaciones seleccionadas. Meta 100%.' : 'Ingresa dos porcentajes: el individual solo sirve como referencia; el grupal se compara con la meta de 100% y calcula el aporte ponderado del KPI.',
                     }}
                   >
                     {!currentFormula && <PercentInput label="Cumplimiento individual" value={form.porcentaje_produccion_individual} disabled={isReadOnly} onChange={(value) => updateForm('porcentaje_produccion_individual', value)} />}
@@ -778,11 +781,11 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                     weight="Peso 10%"
                     meta={currentFormula ? "Meta 10% · Ingreso manual" : "Calificación manual"}
                     guide={{
-                      measures: currentFormula ? 'Rotación calculada externamente.' : 'Mide el cumplimiento de responsabilidades operativas y administrativas del formador durante el mes.',
+                      measures: currentFormula ? 'Rotación calculada con bajas y dotación cargadas.' : 'Mide el cumplimiento de responsabilidades operativas y administrativas del formador durante el mes.',
                       input: currentFormula ? '10% obtiene 10 puntos; por debajo disminuye proporcionalmente. Por encima requiere definición.' : 'Ingresa una calificación manual de 0% a 100%. Si es menor a 100%, debes registrar el sustento u observación.',
                     }}
                   >
-                    <PercentInput label={currentFormula ? "Rotación" : "Cumplimiento administrativo"} value={currentFormula ? form.porcentaje_rotacion ?? 0 : form.porcentaje_administrativo} disabled={isReadOnly} onChange={(value) => updateForm(currentFormula ? 'porcentaje_rotacion' : 'porcentaje_administrativo', value)} />
+                    {currentFormula ? <ReadMetric label="Rotación calculada" value={form.calculo_automatico && form.calculo_detalle?.rotacion_disponible === false ? 'Sin datos' : percent(form.porcentaje_rotacion ?? 0)} /> : <PercentInput label="Cumplimiento administrativo" value={form.porcentaje_administrativo} disabled={isReadOnly} onChange={(value) => updateForm('porcentaje_administrativo', value)} />}
                     <label className="space-y-1 block">
                       <span className={labelClass}>Sustento {!currentFormula && form.porcentaje_administrativo < 100 ? '*' : ''}</span>
                       <textarea disabled={isReadOnly} value={form.observacion_administrativa || ''} onChange={(event) => updateForm('observacion_administrativa', event.target.value)} rows={3} className={inputClass} />

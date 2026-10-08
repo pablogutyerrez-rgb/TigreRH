@@ -17,15 +17,15 @@ test('nueva formula, candado, limites y paridad con servidor', () => {
   assert.equal(backend({ ...input, porcentaje_produccion_grupal: 79.98 }).comision_total, 0);
   assert.equal(backend({ ...input, porcentaje_rotacion: 5 }).aporte_administrativo, 5);
   assert.equal(backend({ ...input, porcentaje_retencion: 100, porcentaje_satisfaccion: 100 }).comision_total, 300);
-  assert.throws(() => backend({ ...input, porcentaje_rotacion: 10.1 }), /falta definir/);
-  for (const rotation of [0, 1.25, 5, 10]) assert.deepEqual(backend({ ...input, porcentaje_rotacion: rotation }), preview({ ...input, porcentaje_rotacion: rotation }));
+  assert.equal(backend({ ...input, porcentaje_rotacion: 10.1 }).aporte_administrativo, 10);
+  for (const rotation of [0, 1.25, 5, 10, 10.1]) assert.deepEqual(backend({ ...input, porcentaje_rotacion: rotation }), preview({ ...input, porcentaje_rotacion: rotation }));
 });
 const data = {
   sessions: [
     { id: 'a', generation_code: 'A', campana: 'Culqi', fecha_inicio: '2026-09-01', fecha_fin: '2026-09-30', formador_ids: ['f', 'g'] },
     { id: 'b', generation_code: 'B', campana: 'Equifax', fecha_inicio: '2026-10-01', fecha_fin: '2026-10-30', formador_id: 'g' },
   ],
-  participants: [{ id: 'p', training_session_id: 'a' }, { id: 'q', training_session_id: 'a' }, { id: 'r', training_session_id: 'b' }],
+  participants: [{ id: 'p', training_session_id: 'a', ventas_ojt: 1 }, { id: 'q', training_session_id: 'a' }, { id: 'r', training_session_id: 'b', ventas_ojt: 0 }],
   attendance: [
     { id: '1', training_session_id: 'a', participant_id: 'p', dia: 2, estado_asistencia: 'Asistió' },
     { id: '2', training_session_id: 'a', participant_id: 'q', dia: 2, estado_asistencia: 'Tardanza' },
@@ -33,24 +33,23 @@ const data = {
     { id: '4', training_session_id: 'b', participant_id: 'r', dia: 2, estado_asistencia: 'Asistió' },
     { id: '5', training_session_id: 'b', participant_id: 'r', dia: 10, estado_asistencia: 'Asistió' },
   ],
-  prospects: [
-    { id: 's1', training_session_id: 'a', estado: 'Venta / Alta' },
-    { id: 's2', training_session_id: 'a', estado: 'Nuevo' },
-    { id: 's3', training_session_id: 'b', estado: 'Venta / Alta' },
-  ],
+  confirmations: [{ id: 'ca', training_session_id: 'a', participant_id: 'p', estado_alta: 'Alta confirmada' }, { id: 'cb', training_session_id: 'b', participant_id: 'r', estado_alta: 'Alta confirmada' }],
   surveys: [{ id: 'sa', training_session_id: 'a' }, { id: 'sb', training_session_id: 'b' }],
   responses: [{ id: 'ra', training_survey_id: 'sa', final_score_20: 18 }, { id: 'rb', training_survey_id: 'sb', final_score_20: 20 }],
 };
-test('multiseleccion usa promedio por capacitacion y no duplica', () => {
-  const result = calculateTrainingVariableFromData('f', ['a', 'b', 'a'], 2026, 9, data, { meses: [9, 10], formador_ids: ['f', 'g'] });
+test('multiseleccion usa datos OJT reales y no duplica', async () => {
+  const sourceData = { ...data, rotation: { disponible: true, porcentaje: 5, bajas: 1, dotacion: 20 } };
+  const result = await calculateTrainingVariableFromData('f', ['a', 'b', 'a'], 2026, 9, sourceData, { meses: [9, 10], formador_ids: ['f', 'g'] });
   assert.deepEqual(result.generation_ids, ['a', 'b']);
   assert.equal(result.porcentaje_retencion, 75);
-  assert.equal(result.porcentaje_produccion_grupal, 75);
+  assert.equal(result.porcentaje_produccion_grupal, 50);
   assert.equal(result.porcentaje_satisfaccion, 95);
-  assert.equal(result.detalle.prospectos_generados, 3);
-  assert.throws(() => calculateTrainingVariableFromData('f', ['b'], 2026, 9, data), /formador/);
-  assert.throws(() => calculateTrainingVariableFromData('g', ['b'], 2026, 9, data), /periodo/);
-  assert.throws(() => calculateTrainingVariableFromData('g', ['b'], 2026, 10, data, { campanas: ['Culqi'] }), /campañas/);
+  assert.equal(result.detalle.altas_operacion, 2);
+  assert.equal(result.detalle.ventas_reales, 1);
+  assert.equal(result.porcentaje_rotacion, 5);
+  await assert.rejects(() => calculateTrainingVariableFromData('f', ['b'], 2026, 9, sourceData), /formador/);
+  await assert.rejects(() => calculateTrainingVariableFromData('g', ['b'], 2026, 9, sourceData), /periodo/);
+  await assert.rejects(() => calculateTrainingVariableFromData('g', ['b'], 2026, 10, sourceData, { campanas: ['Culqi'] }), /campañas/);
 });
 test('comparacion cuenta ventas sin limite de fechas y deduplica ejecutivos', () => {
   const prospects = Array.from({ length: 12 }, (_, i) => ({ id: String(i), campana: 'Culqi', training_session_id: 'a',

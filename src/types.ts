@@ -63,6 +63,12 @@ export interface TrainingVariableEvaluation {
     prospectos_generados: number;
     prospectos_venta_alta: number;
     respuestas_encuesta: number;
+    altas_operacion?: number;
+    ventas_reales?: number;
+    productividad_disponible?: boolean;
+    rotacion_disponible?: boolean;
+    bajas_rotacion?: number;
+    dotacion_rotacion?: number;
   };
   aporte_administrativo: number;
   cumplimiento_total: number;

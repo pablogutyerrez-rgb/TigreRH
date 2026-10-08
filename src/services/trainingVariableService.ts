@@ -42,6 +42,7 @@ export interface AutomaticTrainingVariableCalculation {
   porcentaje_produccion_individual: number;
   porcentaje_produccion_grupal: number;
   porcentaje_satisfaccion: number;
+  porcentaje_rotacion: number;
   detalle: NonNullable<TrainingVariableEvaluation['calculo_detalle']>;
 }
 
