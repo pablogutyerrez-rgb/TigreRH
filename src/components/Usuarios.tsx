@@ -103,6 +103,7 @@ export default function Usuarios({ users, currentUser, onAddUser, onUpdateUser, 
   const [estado, setEstado] = useState<'Activo' | 'Inactivo'>('Activo');
   const [areas, setAreas] = useState<UserArea[]>(defaultAreasByRole('Formador'));
   const [moduleAccess, setModuleAccess] = useState<string[]>(defaultModulesForAreas(defaultAreasByRole('Formador')));
+  const [moduleViewOnly, setModuleViewOnly] = useState<string[]>([]);
 
   // Change Password Modal States
   const [newPassword, setNewPassword] = useState('');
@@ -131,6 +132,7 @@ export default function Usuarios({ users, currentUser, onAddUser, onUpdateUser, 
     const nextAreas = defaultAreasByRole('Formador');
     setAreas(nextAreas);
     setModuleAccess(defaultModulesForAreas(nextAreas));
+    setModuleViewOnly([]);
     setShowModal(true);
   };
 
@@ -145,6 +147,7 @@ export default function Usuarios({ users, currentUser, onAddUser, onUpdateUser, 
     const nextAreas = user.areas && user.areas.length > 0 ? user.areas : defaultAreasByRole(user.rol);
     setAreas(nextAreas);
     setModuleAccess(user.module_access && user.module_access.length > 0 ? user.module_access : defaultModulesForAreas(nextAreas));
+    setModuleViewOnly(user.module_view_only || []);
     setShowModal(true);
   };
 
@@ -153,6 +156,7 @@ export default function Usuarios({ users, currentUser, onAddUser, onUpdateUser, 
     const nextAreas = defaultAreasByRole(nextRole);
     setAreas(nextAreas);
     setModuleAccess(defaultModulesForAreas(nextAreas));
+    setModuleViewOnly([]);
   };
 
   const toggleArea = (area: UserArea) => {
@@ -165,6 +169,7 @@ export default function Usuarios({ users, currentUser, onAddUser, onUpdateUser, 
     const safeAreas = nextAreas.length > 0 ? nextAreas : [area];
     const allowedModuleIds = new Set(defaultModulesForAreas(safeAreas));
     setAreas(safeAreas);
+    setModuleViewOnly((prev) => prev.filter((item) => allowedModuleIds.has(item)));
     setModuleAccess((prev) => {
       const kept = prev.filter((item) => allowedModuleIds.has(item));
       const defaultsForNewArea = MODULE_OPTIONS[area].map((item) => item.id);
@@ -174,6 +179,7 @@ export default function Usuarios({ users, currentUser, onAddUser, onUpdateUser, 
   };
 
   const toggleModule = (moduleId: string) => {
+    setModuleViewOnly((prev) => prev.filter((item) => item !== moduleId));
     setModuleAccess((prev) =>
       prev.includes(moduleId)
         ? prev.filter((item) => item !== moduleId)
@@ -215,6 +221,7 @@ export default function Usuarios({ users, currentUser, onAddUser, onUpdateUser, 
           estado,
           areas,
           module_access: moduleAccess,
+          module_view_only: moduleViewOnly.filter((item) => moduleAccess.includes(item)),
         });
         alert('Usuario actualizado correctamente.');
       } else {
@@ -237,6 +244,7 @@ export default function Usuarios({ users, currentUser, onAddUser, onUpdateUser, 
           estado,
           areas,
           module_access: moduleAccess,
+          module_view_only: moduleViewOnly.filter((item) => moduleAccess.includes(item)),
         });
         alert('Usuario creado en Firebase Authentication y Firestore correctamente.');
       }
@@ -690,7 +698,7 @@ export default function Usuarios({ users, currentUser, onAddUser, onUpdateUser, 
                       </div>
                       <div className="grid sm:grid-cols-2 gap-2">
                         {MODULE_OPTIONS[area].map((item) => (
-                          <label
+                          <div
                             key={item.id}
                             className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] font-bold text-slate-600"
                           >
@@ -701,7 +709,20 @@ export default function Usuarios({ users, currentUser, onAddUser, onUpdateUser, 
                               className="accent-indigo-600"
                             />
                             <span>{item.label}</span>
-                          </label>
+                            {moduleAccess.includes(item.id) && !item.id.endsWith(':reportes') && (
+                              <select
+                                value={moduleViewOnly.includes(item.id) ? 'view' : 'normal'}
+                                onChange={(event) => setModuleViewOnly((prev) => event.target.value === 'view'
+                                  ? [...new Set([...prev, item.id])]
+                                  : prev.filter((id) => id !== item.id))}
+                                aria-label={`Permiso para ${item.label}`}
+                                className="ml-auto rounded border border-slate-200 bg-white px-1 py-0.5 text-[10px]"
+                              >
+                                <option value="normal">Normal</option>
+                                <option value="view">Solo vista</option>
+                              </select>
+                            )}
+                          </div>
                         ))}
                       </div>
                     </div>

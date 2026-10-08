@@ -16,6 +16,7 @@ import { trainingVariableRoutes } from './routes/trainingVariableRoutes.js';
 import { userRoutes } from './routes/userRoutes.js';
 import { getPostgresPool } from './postgres.js';
 import { ensureHybridSchema } from './hybridDb.js';
+import { requireAuth, type AuthenticatedRequest } from './utils/authMiddleware.js';
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
@@ -99,6 +100,36 @@ app.get('/config.js', (_req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/bootstrap', bootstrapRoutes);
+app.use('/api', (req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || req.path.startsWith('/public-surveys/')) return next();
+  const path = req.path;
+  const moduleId = path.startsWith('/trainings/') || path === '/trainings' ? 'formacion:capacitaciones'
+    : path.startsWith('/operations/attendance/') || path.startsWith('/operations/participants/') ? 'formacion:asistencia'
+    : path.startsWith('/operations/confirmations/') ? 'formacion:altas'
+    : path.startsWith('/operations/reopens/') ? 'formacion:reaperturas'
+    : path.startsWith('/surveys') ? 'formacion:encuestas'
+    : path.startsWith('/prospects') ? 'formacion:prospectos'
+    : path.startsWith('/formacion/variables') ? 'formacion:variables'
+    : path.startsWith('/users') ? 'administrador:usuarios'
+    : path.includes('/selection/requisitions/') && path.endsWith('/assign-training') ? 'seleccion:asignacion'
+    : path.startsWith('/selection/applicants/') || path.includes('/applicants') ? 'seleccion:postulantes'
+    : path.startsWith('/selection/requisitions') ? 'seleccion:convocatorias'
+    : null;
+  if (!moduleId) return next();
+  requireAuth(req as AuthenticatedRequest, res, () => {
+    const user = (req as AuthenticatedRequest).user!;
+    const context = req.get('X-Module-Context') || '';
+    const sharedSelectionModules = ['postulantes', 'seguimientos', 'agenda', 'evaluaciones', 'aptos', 'base', 'asignacion', 'historial', 'convocatorias']
+      .map((view) => `seleccion:${view}`);
+    const contextualModule = path.startsWith('/selection/') && sharedSelectionModules.includes(context) &&
+      (user.rol === 'Administrador' || user.module_access.includes(context)) ? context : moduleId;
+    if (user.module_view_only.includes(contextualModule)) {
+      res.status(403).json({ message: 'Este apartado es de solo vista.' });
+      return;
+    }
+    next();
+  });
+});
 app.use('/api/operations', operationRoutes);
 app.use('/api/prospects', prospectRoutes);
 app.use('/api/public-surveys', publicSurveyRoutes);

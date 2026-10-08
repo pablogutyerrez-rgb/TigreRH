@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -21,14 +21,17 @@ import {
   ChevronRight,
   Trash2,
   FileSpreadsheet,
+  Download,
   Grid,
   Clock,
   Edit3,
   X
 } from 'lucide-react';
-import { TrainingSession, Participant, User as AppUser, AttendanceStatus, AttendanceRecord, TrainingSurvey, SurveyResponse } from '../types';
+import { TrainingSession, OjtModule, Participant, User as AppUser, AttendanceStatus, AttendanceRecord, TrainingSurvey, SurveyResponse, OperationConfirmation } from '../types';
+import { overlapsDateRange } from '../utils/surveyFilters';
+import { buildTrainingWorkbook } from '../utils/trainingExport';
 import { permissions } from '../utils/permissions';
-import { getTrainingDays, getTrainingDaysCount } from '../utils/trainingDays';
+import { getBusinessDayDate, getTrainingDays, getTrainingDaysCount } from '../utils/trainingDays';
 import { BPO_CAMPAIGNS, getCampaignPrefix, normalizeCampaignName } from '../constants/campaigns';
 import {
   getSessionInitialTrainerIds,
@@ -36,20 +39,26 @@ import {
   getSessionTrainerIds,
   getSessionTrainerNames,
   isSessionAssignedTrainer,
+  isSessionInitialTrainer,
 } from '../utils/trainingAssignments';
 
 interface CapacitacionesProps {
   sessions: TrainingSession[];
+  ojtModules?: OjtModule[];
   participants: Participant[];
   attendance?: AttendanceRecord[];
   surveys?: TrainingSurvey[];
   responses?: SurveyResponse[];
+  confirmations?: OperationConfirmation[];
   currentUser: AppUser;
   trainers: AppUser[];
   recruiters: AppUser[];
   onAddSession: (newSession: Omit<TrainingSession, 'id' | 'fecha_creacion' | 'formador_nombre' | 'reclutador_nombre'>, uploadedParticipants: Omit<Participant, 'id'>[]) => Promise<void>;
   onDeleteSession: (sessionId: string) => void;
-  onViewAttendance: (sessionId: string) => void;
+  onViewAttendance: (sessionId: string, phase?: 'initial' | 'ojt') => void;
+  onAssignOjt?: (sessionId: string) => Promise<void>;
+  onUpdateOjtModule?: (moduleId: string, changes: Partial<OjtModule>) => Promise<void>;
+  onDeleteOjtModule?: (moduleId: string) => Promise<void>;
   onCloseCampaign?: (sessionId: string) => void;
   onUpdateSession?: (sessionId: string, updatedFields: Partial<TrainingSession>) => void;
   onAppendParticipants?: (
@@ -134,16 +143,21 @@ const TrainerMultiSelect = ({
 
 export default function Capacitaciones({
   sessions,
+  ojtModules = [],
   participants,
   attendance = [],
   surveys = [],
   responses = [],
+  confirmations = [],
   currentUser,
   trainers,
   recruiters,
   onAddSession,
   onDeleteSession,
   onViewAttendance,
+  onAssignOjt,
+  onUpdateOjtModule,
+  onDeleteOjtModule,
   onCloseCampaign,
   onUpdateSession,
   onAppendParticipants,
@@ -153,11 +167,23 @@ export default function Capacitaciones({
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCampaña, setFilterCampaña] = useState('todos');
   const [filterEstado, setFilterEstado] = useState('todos');
+  const [filterDesde, setFilterDesde] = useState('');
+  const [filterHasta, setFilterHasta] = useState('');
+  const [filterFormador, setFilterFormador] = useState('todos');
+  const [filterMes, setFilterMes] = useState('todos');
+  const [filterAnio, setFilterAnio] = useState('todos');
+  const [filterEtapa, setFilterEtapa] = useState<'todas' | 'initial' | 'ojt'>('todas');
+  const [assigningOjtId, setAssigningOjtId] = useState<string | null>(null);
+  const [editingOjtId, setEditingOjtId] = useState<string | null>(null);
+  const [ojtName, setOjtName] = useState('');
+  const [ojtHour, setOjtHour] = useState('');
+  const [ojtTurn, setOjtTurn] = useState('');
+  const [ojtModality, setOjtModality] = useState('');
   const [isSavingTraining, setIsSavingTraining] = useState(false);
 
   // Form State
-  const [fechaInicio, setFechaInicio] = useState('2026-07-02');
-  const [fechaFin, setFechaFin] = useState('2026-07-06');
+  const [fechaInicio, setFechaInicio] = useState(() => new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Lima' }));
+  const [fechaFin, setFechaFin] = useState('');
   const [campaña, setCampaña] = useState<string>(BPO_CAMPAIGNS[0]);
   const [tipoCapacitacion, setTipoCapacitacion] = useState('Capacitación regular');
   const [formadorInicialIds, setFormadorInicialIds] = useState<string[]>([]);
@@ -169,6 +195,10 @@ export default function Capacitaciones({
   const [turno, setTurno] = useState<'Part time' | 'Full time' | 'Mini full'>('Full time');
   const [horaCapacitacion, setHoraCapacitacion] = useState('08:00');
   const [observaciones, setObservaciones] = useState('');
+
+  React.useEffect(() => {
+    setFechaFin(getBusinessDayDate(fechaInicio, 5));
+  }, [fechaInicio]);
 
   // Editing Training states
   const [editingSession, setEditingSession] = useState<TrainingSession | null>(null);
@@ -265,27 +295,17 @@ export default function Capacitaciones({
     const surveyEnabledOrClosed = survey ? (survey.estado === 'Habilitada' || survey.estado === 'Cerrada') : false;
     const surveyLinkGenerated = survey ? !!survey.token : false;
 
-    // Helper to calculate eligibility
-    const isHabilitado = (p: Participant) => {
-      if (p.estado_final === 'Desistió' || p.estado_final === 'No asistió') {
-        return false;
-      }
-      const pAttendance = attendance.filter(a =>
-        a.participant_id === p.id &&
-        a.training_session_id === sessionId &&
-        requiredDays.includes(a.dia)
-      );
-      if (pAttendance.length === 0) return true;
-      const presentCount = pAttendance.filter(
-        a => a.estado_asistencia === 'Asistió' || a.estado_asistencia === 'Tardanza'
-      ).length;
-      const attendancePercent = Math.round((presentCount / pAttendance.length) * 100);
-      return attendancePercent >= 80;
-    };
+    const isHabilitado = (p: Participant) => attendance.some(a =>
+      a.participant_id === p.id && a.training_session_id === sessionId && a.dia === 5
+    );
+
+    const hasResponded = (p: Participant) => !!survey && responses.some(r =>
+      r.training_survey_id === survey.id && (r.participant_id === p.id || r.dni === p.dni)
+    );
 
     const habilitados = sessionParts.filter(isHabilitado);
-    const respondieron = survey ? habilitados.filter(p => responses.some(r => r.training_survey_id === survey.id && r.dni === p.dni)) : [];
-    const pendientes = survey ? habilitados.filter(p => !responses.some(r => r.training_survey_id === survey.id && r.dni === p.dni)) : habilitados;
+    const respondieron = habilitados.filter(hasResponded);
+    const pendientes = habilitados.filter(p => !hasResponded(p));
 
     const isSurveyComplete = surveyCreated && surveyEnabledOrClosed && surveyLinkGenerated && pendientes.length === 0 && habilitados.length > 0;
 
@@ -338,19 +358,13 @@ export default function Capacitaciones({
     });
 
     const survey = surveys.find(s => s.training_session_id === session.id);
-    const isHabilitado = (p: Participant) => {
-      if (p.estado_final === 'Desistió' || p.estado_final === 'No asistió') return false;
-      const pAttendance = attendance.filter(a =>
-        a.participant_id === p.id &&
-        a.training_session_id === session.id &&
-        requiredDays.includes(a.dia)
-      );
-      if (pAttendance.length === 0) return true;
-      const presentCount = pAttendance.filter(a => a.estado_asistencia === 'Asistió' || a.estado_asistencia === 'Tardanza').length;
-      return Math.round((presentCount / pAttendance.length) * 100) >= 80;
-    };
+    const isHabilitado = (p: Participant) => attendance.some(a =>
+      a.participant_id === p.id && a.training_session_id === session.id && a.dia === 5
+    );
     const habilitados = sParts.filter(isHabilitado);
-    const pendientes = survey ? habilitados.filter(p => !responses.some(r => r.training_survey_id === survey.id && r.dni === p.dni)) : habilitados;
+    const pendientes = habilitados.filter(p => !survey || !responses.some(r =>
+      r.training_survey_id === survey.id && (r.participant_id === p.id || r.dni === p.dni)
+    ));
     const isSurveyComplete = !!survey && (survey.estado === 'Habilitada' || survey.estado === 'Cerrada') && pendientes.length === 0 && habilitados.length > 0;
 
     const isAptosDefined = sParts.length > 0 && sParts.some(p => p.resultado_formacion === 'Apto' || p.resultado_formacion === 'No apto');
@@ -595,6 +609,7 @@ export default function Capacitaciones({
 
   const handleEditStartDateChange = (nextStartDate: string) => {
     setEditFechaInicio(nextStartDate);
+    if (editingSession?.training_model === 'split_ojt') setEditFechaFin(getBusinessDayDate(nextStartDate, 5));
     if (editingSession && currentUser.rol === 'Administrador') {
       setEditManualGenerationCode(buildTrainingCode(editCampaña, nextStartDate, editingSession.id));
     }
@@ -943,10 +958,7 @@ export default function Capacitaciones({
         
         if (ymd && !isNaN(Date.parse(ymd))) {
           setFechaInicio(ymd);
-          const start = new Date(ymd + 'T12:00:00');
-          start.setDate(start.getDate() + 4);
-          const endYmd = start.toISOString().split('T')[0];
-          setFechaFin(endYmd);
+          setFechaFin(getBusinessDayDate(ymd, 5));
         }
       }
     }
@@ -1231,6 +1243,10 @@ export default function Capacitaciones({
       alert('No se pudo generar la nomenclatura de la capacitación.');
       return;
     }
+    if ([0, 6].includes(new Date(`${fechaInicio}T12:00:00`).getDay())) {
+      alert('La capacitación debe iniciar de lunes a viernes.');
+      return;
+    }
     if (validatedParticipants.length === 0) {
       alert('Debe cargar y validar al menos un participante para iniciar la capacitación.');
       return;
@@ -1331,14 +1347,44 @@ export default function Capacitaciones({
 
       const matchesCampaña = filterCampaña === 'todos' || s.campaña === filterCampaña;
       const matchesEstado = filterEstado === 'todos' || s.estado === filterEstado;
+      const matchesFecha = overlapsDateRange(s.fecha_inicio, s.fecha_fin, filterDesde, filterHasta);
+      const matchesFormador = filterFormador === 'todos' || getSessionTrainerIds(s).includes(filterFormador);
+      const matchesMes = filterMes === 'todos' || s.fecha_inicio.slice(5, 7) === filterMes;
+      const matchesAnio = filterAnio === 'todos' || s.fecha_inicio.slice(0, 4) === filterAnio;
 
       // If user is a Formador, they can only see their own assigned sessions (this is double guarded here)
       const matchesRoleAccess =
         currentUser.rol !== 'Formador' || isSessionAssignedTrainer(s, currentUser.id);
 
-      return matchesSearch && matchesCampaña && matchesEstado && matchesRoleAccess;
+      return matchesSearch && matchesCampaña && matchesEstado && matchesFecha && matchesFormador && matchesMes && matchesAnio && matchesRoleAccess;
     });
-  }, [sessions, searchTerm, filterCampaña, filterEstado, currentUser]);
+  }, [sessions, searchTerm, filterCampaña, filterEstado, filterDesde, filterHasta, filterFormador, filterMes, filterAnio, currentUser]);
+
+  const matchesOjtSession = (module: OjtModule, id: string) => sessions.some((session) =>
+      session.id === id &&
+      (currentUser.rol !== 'Formador' || isSessionAssignedTrainer(session, currentUser.id)) &&
+      (filterCampaña === 'todos' || session.campaña === filterCampaña) &&
+      (filterFormador === 'todos' || getSessionTrainerIds(session).includes(filterFormador)) &&
+      (filterMes === 'todos' || module.fecha_inicio.slice(5, 7) === filterMes) &&
+      (filterAnio === 'todos' || module.fecha_inicio.slice(0, 4) === filterAnio) &&
+      overlapsDateRange(module.fecha_inicio, module.fecha_fin, filterDesde, filterHasta) &&
+      (!searchTerm || [module.nombre, session.nombre_generacion, session.campaña, session.formador_nombre]
+        .some((value) => value.toLowerCase().includes(searchTerm.toLowerCase()))));
+  const visibleOjtModules = ojtModules.filter((module) =>
+    module.generation_ids.some((id) => matchesOjtSession(module, id)) &&
+    (filterEstado === 'todos' || module.estado === filterEstado),
+  );
+
+  const downloadInformation = () => {
+    const modules = filterEtapa === 'initial' ? [] : visibleOjtModules;
+    const selectedIds = new Set(filterEtapa === 'ojt' ? [] : filteredSessions.map((session) => session.id));
+    modules.forEach((module) => module.generation_ids.forEach((id) => {
+      if (matchesOjtSession(module, id)) selectedIds.add(id);
+    }));
+    const selectedSessions = sessions.filter((session) => selectedIds.has(session.id));
+    const workbook = buildTrainingWorkbook(selectedSessions, modules, participants, attendance, confirmations);
+    XLSX.writeFile(workbook, 'capacitaciones.xlsx');
+  };
 
   const closeRequirementsMet =
     validationDetails.isAttendanceComplete &&
@@ -1364,7 +1410,15 @@ export default function Capacitaciones({
           </p>
         </div>
 
-        {view === 'list' && permissions[currentUser.rol]?.canCreateTraining && (
+        <div className="flex flex-wrap items-center gap-2">
+        {view === 'list' && (
+          <button type="button" onClick={downloadInformation}
+            className="bg-linear-to-r from-fuchsia-600 via-purple-600 to-indigo-600 hover:from-fuchsia-700 hover:to-indigo-700 text-white font-semibold rounded-xl px-4 py-2.5 flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all transform active:scale-95">
+            <Download className="w-5 h-5" />
+            Descargar información
+          </button>
+        )}
+        {view === 'list' && permissions[currentUser.rol]?.canCreateTraining && !currentUser.module_view_only?.includes('formacion:capacitaciones') && (
           <button
             onClick={() => setView('create')}
             className="bg-linear-to-r from-fuchsia-600 via-purple-600 to-indigo-600 hover:from-fuchsia-700 hover:to-indigo-700 text-white font-semibold rounded-xl px-4 py-2.5 flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all transform active:scale-95"
@@ -1373,6 +1427,7 @@ export default function Capacitaciones({
             Crear Capacitación
           </button>
         )}
+        </div>
       </div>
 
       {view === 'list' ? (
@@ -1414,17 +1469,90 @@ export default function Capacitaciones({
                   <option value="Activa">Activa</option>
                   <option value="Capacitación cerrada">Capacitación cerrada</option>
                   <option value="Campaña cerrada">Campaña cerrada</option>
+                  <option value="Abierto">OJT abierto</option>
+                  <option value="Cerrado">OJT cerrado</option>
                 </select>
               </div>
 
               <div className="text-right flex items-center justify-end text-xs text-slate-500">
                 Mostrando {filteredSessions.length} capacitaciones
               </div>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
+                <label className="min-w-0 flex-1 text-xs text-slate-500">Desde
+                  <input type="date" value={filterDesde} max={filterHasta || undefined} onChange={(event) => setFilterDesde(event.target.value)} aria-label="Desde" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm" />
+                </label>
+                <label className="min-w-0 flex-1 text-xs text-slate-500">Hasta
+                  <input type="date" value={filterHasta} min={filterDesde || undefined} onChange={(event) => setFilterHasta(event.target.value)} aria-label="Hasta" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm" />
+                </label>
+              </div>
+              <select value={filterFormador} onChange={(event) => setFilterFormador(event.target.value)} aria-label="Formador" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm">
+                <option value="todos">Todos los formadores</option>
+                {trainers.map((trainer) => <option key={trainer.id} value={trainer.id}>{trainer.nombre}</option>)}
+              </select>
+              <select value={filterMes} onChange={(event) => setFilterMes(event.target.value)} aria-label="Mes" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm">
+                <option value="todos">Todos los meses</option>
+                {Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, '0')).map((month) => <option key={month} value={month}>{month}</option>)}
+              </select>
+              <select value={filterAnio} onChange={(event) => setFilterAnio(event.target.value)} aria-label="Año" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm">
+                <option value="todos">Todos los años</option>
+                {Array.from(new Set(sessions.map((session) => session.fecha_inicio.slice(0, 4)))).sort().reverse().map((year) => <option key={year} value={year}>{year}</option>)}
+              </select>
+              <select value={filterEtapa} onChange={(event) => setFilterEtapa(event.target.value as typeof filterEtapa)} aria-label="Etapa" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm">
+                <option value="todas">Todas las etapas</option>
+                <option value="initial">Capacitación Inicial</option>
+                <option value="ojt">OJT</option>
+              </select>
             </div>
           </div>
 
+          {filterEtapa !== 'initial' && visibleOjtModules.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {visibleOjtModules.map((module) => (
+                <div key={module.id} className="glass-card rounded-2xl p-5 space-y-2 text-xs text-slate-600">
+                  <h3 className="text-base font-bold text-slate-800">{module.nombre}</h3>
+                  <p>{module.generation_codes.join(', ')}</p>
+                  <p>Periodo: {module.fecha_inicio} al {module.fecha_fin}</p>
+                  <p>Hora: {module.hora_capacitacion} · Formador OJT: {module.formador_ojt_nombres.join(', ')}</p>
+                  <p>Participantes: {module.participant_ids.length} · {module.turno} · {module.modalidad}</p>
+                  {module.generation_ids.filter((id) => matchesOjtSession(module, id)).map((id) => (
+                    <button key={id} type="button" onClick={() => onViewAttendance(id, 'ojt')} className="block text-indigo-700 font-semibold hover:underline">
+                      Ver asistencia OJT: {sessions.find((session) => session.id === id)?.generation_code || id}
+                    </button>
+                  ))}
+                  {currentUser.rol === 'Administrador' && !currentUser.module_view_only?.includes('formacion:capacitaciones') && (
+                    <div className="flex flex-wrap items-center gap-2 pt-2">
+                      {editingOjtId === module.id ? (
+                        <>
+                          <input value={ojtName} onChange={(event) => setOjtName(event.target.value)} aria-label="Nombre del OJT" className="glass-input rounded-lg px-2 py-1 text-xs" />
+                          <input type="time" value={ojtHour} onChange={(event) => setOjtHour(event.target.value)} aria-label="Horario OJT" className="glass-input rounded-lg px-2 py-1 text-xs" />
+                          <input value={ojtTurn} onChange={(event) => setOjtTurn(event.target.value)} aria-label="Turno OJT" className="glass-input rounded-lg px-2 py-1 text-xs" />
+                          <input value={ojtModality} onChange={(event) => setOjtModality(event.target.value)} aria-label="Modalidad OJT" className="glass-input rounded-lg px-2 py-1 text-xs" />
+                          <button type="button" onClick={async () => {
+                            try { await onUpdateOjtModule?.(module.id, { nombre: ojtName.trim(), hora_capacitacion: ojtHour, turno: ojtTurn, modalidad: ojtModality }); setEditingOjtId(null); }
+                            catch (error) { alert(error instanceof Error ? error.message : 'No se pudo editar OJT.'); }
+                          }} className="text-indigo-700 font-semibold">Guardar</button>
+                        </>
+                      ) : (
+                        <button type="button" onClick={() => { setEditingOjtId(module.id); setOjtName(module.nombre); setOjtHour(module.hora_capacitacion); setOjtTurn(module.turno); setOjtModality(module.modalidad); }} className="text-indigo-700 font-semibold">Editar</button>
+                      )}
+                      <button type="button" onClick={async () => {
+                        try { await onUpdateOjtModule?.(module.id, { estado: module.estado === 'Abierto' ? 'Cerrado' : 'Abierto' }); }
+                        catch (error) { alert(error instanceof Error ? error.message : 'No se pudo cambiar el estado de OJT.'); }
+                      }} className="text-indigo-700 font-semibold">{module.estado === 'Abierto' ? 'Cerrar' : 'Abrir'}</button>
+                      <button type="button" onClick={async () => {
+                        if (!confirm(`¿Eliminar ${module.nombre}?`)) return;
+                        try { await onDeleteOjtModule?.(module.id); }
+                        catch (error) { alert(error instanceof Error ? error.message : 'No se pudo eliminar OJT.'); }
+                      }} className="text-rose-700 font-semibold">Eliminar</button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Sessions Listing */}
-          {filteredSessions.length === 0 ? (
+          {filterEtapa !== 'ojt' && filteredSessions.length === 0 ? (
             <div className="glass-card rounded-2xl p-12 text-center">
               <div className="max-w-md mx-auto space-y-3">
                 <div className="bg-slate-500/10 text-slate-500 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto backdrop-blur-xs">
@@ -1436,7 +1564,7 @@ export default function Capacitaciones({
                 </p>
               </div>
             </div>
-          ) : (
+          ) : filterEtapa !== 'ojt' && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredSessions.map((session) => {
                 // Count participants for this session
@@ -1521,7 +1649,23 @@ export default function Capacitaciones({
                     {/* Actions footer */}
                     <div className="bg-slate-50/50 p-4 rounded-b-2xl border-t border-slate-50 flex justify-between items-center gap-2">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        {permissions[currentUser.rol]?.canEditTraining && (
+                        {onAssignOjt && !session.ojt_module_id &&
+                          ['Entel Empresas RUC 10', 'Entel Empresas RUC 20', 'GPON', 'Culqi', 'Equifax', 'Fija', 'Tigre Academy'].includes(session.campaña) &&
+                          (currentUser.rol === 'Administrador' || (['Formador', 'Analista'].includes(currentUser.rol) && isSessionInitialTrainer(session, currentUser.id))) &&
+                          !currentUser.module_view_only?.includes('formacion:capacitaciones') &&
+                          participants.filter((part) => part.training_session_id === session.id).length > 0 &&
+                          participants.filter((part) => part.training_session_id === session.id).every((part) =>
+                            attendance.some((record) => record.participant_id === part.id && record.dia === 5 && !['Seleccionar', 'Pendiente', ''].includes(record.estado_asistencia))) && (
+                          <button type="button" disabled={assigningOjtId === session.id} onClick={async () => {
+                            setAssigningOjtId(session.id);
+                            try { await onAssignOjt(session.id); }
+                            catch (error) { alert(error instanceof Error ? error.message : 'No se pudo asignar OJT.'); }
+                            finally { setAssigningOjtId(null); }
+                          }} className="bg-indigo-50 text-indigo-700 font-bold text-xs px-2.5 py-1.5 rounded-lg disabled:opacity-50">
+                            Asignar OJT
+                          </button>
+                        )}
+                        {permissions[currentUser.rol]?.canEditTraining && !currentUser.module_view_only?.includes('formacion:capacitaciones') && (
                           <button
                             onClick={() => startEditing(session)}
                             className="text-slate-400 hover:text-indigo-600 p-2 rounded-lg hover:bg-indigo-50 transition-colors cursor-pointer"
@@ -1534,8 +1678,7 @@ export default function Capacitaciones({
 
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {/* Delete button (Only for creator Reclutador or Admin, and check canDeleteTraining) */}
-                        {permissions[currentUser.rol]?.canDeleteTraining && (currentUser.rol === 'Administrador' ||
-                          (currentUser.rol === 'Reclutador' && session.reclutador_id === currentUser.id)) && (
+                        {currentUser.rol === 'Administrador' && !currentUser.module_view_only?.includes('formacion:capacitaciones') && (
                           <button
                             onClick={() => {
                               if (confirm(`¿Está seguro de eliminar esta capacitación y sus ${sessionPartsCount} participantes? Esta acción registrará una auditoría.`)) {
@@ -1550,7 +1693,7 @@ export default function Capacitaciones({
                         )}
 
                         {/* Close Campaign / Training button (Only for Admin, or assigned Formador if they want to submit close request) */}
-                        {session.estado !== 'Capacitación cerrada' && session.estado !== 'Campaña cerrada' && onCloseCampaign && (currentUser.rol === 'Administrador' || (currentUser.rol === 'Formador' && isSessionAssignedTrainer(session, currentUser.id))) && (
+                        {session.estado !== 'Capacitación cerrada' && session.estado !== 'Campaña cerrada' && onCloseCampaign && currentUser.rol === 'Administrador' && !currentUser.module_view_only?.includes('formacion:capacitaciones') && (
                           <button
                             onClick={() => handleInitiateClose(session)}
                             className="bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold text-xs px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
@@ -1564,7 +1707,7 @@ export default function Capacitaciones({
                         {(
                           session.estado === 'Capacitación cerrada' ||
                           (currentUser.rol === 'Administrador' && session.estado === 'Campaña cerrada')
-                        ) && (currentUser.rol === 'Administrador' || currentUser.rol === 'Analista') && (
+                        ) && currentUser.rol === 'Administrador' && !currentUser.module_view_only?.includes('formacion:capacitaciones') && (
                           <button
                             onClick={() => handleInitiateReopen(session)}
                             className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
@@ -1691,7 +1834,7 @@ export default function Capacitaciones({
                   <input
                     type="date"
                     value={fechaFin}
-                    onChange={(e) => setFechaFin(e.target.value)}
+                    readOnly
                     className="w-full text-sm bg-slate-50 text-slate-700 rounded-xl border border-slate-200 p-2.5 focus:ring-2 focus:ring-fuchsia-500 outline-hidden"
                   />
                 </div>
@@ -2268,6 +2411,7 @@ export default function Capacitaciones({
                     type="date"
                     value={editFechaFin}
                     onChange={(e) => setEditFechaFin(e.target.value)}
+                    max={editingSession?.training_model === 'split_ojt' ? getBusinessDayDate(editFechaInicio, 5) : undefined}
                     className="w-full text-sm bg-slate-50 text-slate-700 rounded-xl border border-slate-200 p-2.5 focus:ring-2 focus:ring-indigo-500 outline-hidden"
                   />
                 </div>

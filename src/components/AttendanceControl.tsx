@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -35,13 +35,14 @@ import {
 } from 'lucide-react';
 import { TrainingSession, Participant, AttendanceRecord, AttendanceStatus, User as AppUser, AttendanceReopenRequest, OperationConfirmation } from '../types';
 import { permissions } from '../utils/permissions';
-import { getTrainingDays, getTrainingDaysCount } from '../utils/trainingDays';
+import { getSessionDayDate, getTrainingDays, getTrainingDaysCount } from '../utils/trainingDays';
 import { getSessionTrainerNames, isSessionInitialTrainer, isSessionOjtTrainer } from '../utils/trainingAssignments';
 import { getParticipantCvUrlRemote, uploadParticipantCvRemote } from '../services/operationService';
 import * as XLSX from 'xlsx';
 
 interface AttendanceControlProps {
   session: TrainingSession;
+  phase?: 'initial' | 'ojt';
   participants: Participant[];
   attendance: AttendanceRecord[];
   confirmations: OperationConfirmation[];
@@ -121,6 +122,7 @@ const ATTENDANCE_OPTIONS: Array<{ value: AttendanceStatus; label: string }> = [
 
 export default function AttendanceControl({
   session,
+  phase = 'initial',
   participants,
   attendance,
   confirmations,
@@ -136,22 +138,23 @@ export default function AttendanceControl({
   onGoBack,
   onAttemptLockedEdit
 }: AttendanceControlProps) {
-  const trainingDays = useMemo(() => getTrainingDays(session), [session.training_days]);
-  const trainingDaysCount = useMemo(() => getTrainingDaysCount(session), [session.training_days]);
+  const trainingDays = useMemo(() => phase === 'ojt'
+    ? [6, 7, 8, 9, 10] : getTrainingDays(session), [session.training_days, phase]);
+  const trainingDaysCount = useMemo(() => trainingDays[trainingDays.length - 1], [trainingDays]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedDay, setSelectedDay] = useState<number>(1);
+  const [selectedDay, setSelectedDay] = useState<number>(phase === 'ojt' ? 6 : 1);
   const [selectedParticipants, setSelectedParticipants] = useState<string[]>([]);
   const isAdmin = currentUser.rol === 'Administrador';
-  const isInitialTrainer = currentUser.rol === 'Formador' && isSessionInitialTrainer(session, currentUser.id);
-  const isOjtTrainer = currentUser.rol === 'Formador' && isSessionOjtTrainer(session, currentUser.id);
+  const isInitialTrainer = ['Formador', 'Analista'].includes(currentUser.rol) && isSessionInitialTrainer(session, currentUser.id);
+  const isOjtTrainer = ['Formador', 'Analista'].includes(currentUser.rol) && isSessionOjtTrainer(session, currentUser.id);
   const canRoleEditAttendanceDay = (day: number) =>
     isAdmin || (isInitialTrainer && day <= 5) || (isOjtTrainer && day >= 6);
 
   useEffect(() => {
-    if (selectedDay > trainingDaysCount) {
-      setSelectedDay(trainingDaysCount);
+    if (!trainingDays.includes(selectedDay)) {
+      setSelectedDay(trainingDays[0]);
     }
-  }, [selectedDay, trainingDaysCount]);
+  }, [selectedDay, trainingDays]);
 
   // Collapsible Filters Panel
   const [showFiltersPanel, setShowFiltersPanel] = useState(false);
@@ -228,8 +231,8 @@ export default function AttendanceControl({
     } else {
       setOutcomeParticipant(part);
       setActiveOutcome(value);
-      setOutcomeComment(part.comentario_aptitud || '');
-      setOutcomeReason(part.motivo_no_apt || '');
+      setOutcomeComment((phase === 'ojt' ? part.comentario_aptitud_ojt : part.comentario_aptitud) || '');
+      setOutcomeReason((phase === 'ojt' ? part.motivo_no_apt_ojt : part.motivo_no_apt) || '');
       setOutcomeError('');
       setShowOutcomeModal(true);
     }
@@ -256,14 +259,14 @@ export default function AttendanceControl({
     const rowAttendance = trainingDays.map(day => attendanceMap[`${part.id}_${day}`]);
     const hasDropout = part.estado_final === 'Desistió' || rowAttendance.some(a => isDropoutStatus(a?.estado_asistencia));
     const hasAnyPresent = rowAttendance.some(a => isPresentStatus(a?.estado_asistencia));
-    return !hasDropout && hasAnyPresent && (isAdmin || isInitialTrainer);
+    return phase !== 'ojt' && !currentUser.module_view_only?.includes('formacion:asistencia') && !hasDropout && hasAnyPresent && (isAdmin || isInitialTrainer);
   };
 
   const canEditOutcome = (part: Participant) => {
     const rowAttendance = trainingDays.map(day => attendanceMap[`${part.id}_${day}`]);
     const hasDropout = part.estado_final === 'Desistió' || rowAttendance.some(a => isDropoutStatus(a?.estado_asistencia));
     const hasAnyPresent = rowAttendance.some(a => isPresentStatus(a?.estado_asistencia));
-    return !hasDropout && hasAnyPresent && (isAdmin || isOjtTrainer);
+    return !currentUser.module_view_only?.includes('formacion:asistencia') && !hasDropout && hasAnyPresent && (isAdmin || (session.training_model === 'split_ojt' && phase === 'initial' ? isInitialTrainer : isOjtTrainer));
   };
 
   const saveEvaluation = (part: Participant, rawScore: string, observation: string) => {
@@ -477,7 +480,7 @@ export default function AttendanceControl({
   // Filter participants
   const filteredParts = useMemo(() => {
     return participants.filter(p => {
-      if (p.training_session_id !== session.id) return false;
+      if (p.training_session_id !== session.id || (phase === 'ojt' && session.training_model === 'split_ojt' && !attendance.some((record) => record.participant_id === p.id && record.dia >= 6 && record.dia <= 10))) return false;
 
       const normalizedSearch = searchTerm.trim().toLowerCase();
       const matchesSearch = !normalizedSearch ||
@@ -509,7 +512,7 @@ export default function AttendanceControl({
         const conf = confirmationsMap[p.id];
         computedStatus = conf?.estado_alta === 'Alta confirmada' || p.estado_alta === 'Alta confirmada'
           ? 'Alta confirmada'
-          : conf?.estado_alta === 'No alta' || p.estado_alta === 'No alta' || p.resultado_formacion === 'No apto'
+          : conf?.estado_alta === 'No alta' || p.estado_alta === 'No alta' || (session.training_model === 'split_ojt' && phase === 'ojt' ? p.resultado_formacion_ojt : p.resultado_formacion) === 'No apto'
             ? 'Completó capacitación'
             : 'Pendiente de alta';
       } else if (rowAttendance.some(a => isPresentStatus(a?.estado_asistencia))) {
@@ -536,7 +539,7 @@ export default function AttendanceControl({
 
       return true;
     });
-  }, [participants, session.id, searchTerm, selectedDay, attendanceMap, confirmationsMap, trainingDays, filterAttendanceStatus, filterFinalStatus, filterAltaStatus, filterObservationsOnly, filterUnmarkedOnly]);
+  }, [participants, session.id, session.training_days, phase, attendance, searchTerm, selectedDay, attendanceMap, confirmationsMap, trainingDays, filterAttendanceStatus, filterFinalStatus, filterAltaStatus, filterObservationsOnly, filterUnmarkedOnly]);
 
   // Attendance metrics & progress indicators (Item 6)
   const stats = useMemo(() => {
@@ -579,7 +582,8 @@ export default function AttendanceControl({
     if (!currentUser) return true;
 
     // Central Guard: check if role has permission to edit attendance at all
-    if (!permissions[currentUser.rol]?.canEditAttendance) return true;
+    if (currentUser.module_view_only?.includes('formacion:asistencia')) return true;
+    if (!permissions[currentUser.rol]?.canEditAttendance && !(currentUser.rol === 'Analista' && (isInitialTrainer || isOjtTrainer))) return true;
 
     if (!canRoleEditAttendanceDay(selectedDay)) return true;
 
@@ -587,7 +591,7 @@ export default function AttendanceControl({
     if (currentUser.rol === 'Administrador') return false;
 
     // Rule: Formador -> Checks hours and reopens
-    if (currentUser.rol === 'Formador') {
+    if (currentUser.rol === 'Formador' || (currentUser.rol === 'Analista' && (isInitialTrainer || isOjtTrainer))) {
       const hour = simulatedTime.hour;
       const min = simulatedTime.minute;
       const totalMinutes = hour * 60 + min;
@@ -706,9 +710,7 @@ export default function AttendanceControl({
   // Date generator based on Session Start Date
   const getDayDate = (day: number) => {
     try {
-      const baseDate = new Date(session.fecha_inicio + 'T12:00:00');
-      baseDate.setDate(baseDate.getDate() + (day - 1));
-      return baseDate.toISOString().split('T')[0];
+      return getSessionDayDate(session, day);
     } catch {
       return session.fecha_inicio;
     }
@@ -1313,9 +1315,10 @@ export default function AttendanceControl({
                       Día {dayNum}
                     </th>
                   ))}
-                  <th className="p-4 text-center">Evaluación</th>
+                  {(session.training_model !== 'split_ojt' || phase === 'initial') && <th className="p-4 text-center">Evaluación</th>}
                   <th className="p-4 text-center">Resultado formación</th>
-                  <th className="p-4">Estado Final</th>
+                  {session.training_model === 'split_ojt' && phase === 'ojt' && <th className="p-4 text-center">Ventas</th>}
+                  {(session.training_model !== 'split_ojt' || phase === 'ojt') && <th className="p-4">Estado Final</th>}
                   <th className="p-4">Deserción / Obs</th>
                 </tr>
               </thead>
@@ -1339,7 +1342,7 @@ export default function AttendanceControl({
                     const conf = confirmationsMap[part.id];
                     computedStatus = conf?.estado_alta === 'Alta confirmada' || part.estado_alta === 'Alta confirmada' || part.estado_final === 'Alta confirmada'
                       ? 'Alta confirmada'
-                      : conf?.estado_alta === 'No alta' || part.estado_alta === 'No alta' || part.resultado_formacion === 'No apto'
+                      : conf?.estado_alta === 'No alta' || part.estado_alta === 'No alta' || (session.training_model === 'split_ojt' && phase === 'ojt' ? part.resultado_formacion_ojt : part.resultado_formacion) === 'No apto'
                         ? 'Completó capacitación'
                         : 'Pendiente de alta';
                   } else if (rowAttendance.some(a => isPresentStatus(a?.estado_asistencia))) {
@@ -1489,7 +1492,7 @@ export default function AttendanceControl({
                       })}
 
                       {/* Evaluation score cell */}
-                      <td className="p-2 text-center bg-slate-50/60 min-w-[190px]">
+                      {(session.training_model !== 'split_ojt' || phase === 'initial') && <td className="p-2 text-center bg-slate-50/60 min-w-[190px]">
                         {(() => {
                           const editable = canEditEvaluation(part);
                           const currentScore = part.evaluacion_nota ?? '';
@@ -1531,14 +1534,17 @@ export default function AttendanceControl({
                             </div>
                           );
                         })()}
-                      </td>
+                      </td>}
 
                       {/* Resultado formación cell */}
                       <td className="p-2 text-center bg-indigo-50/5">
                         {(() => {
                           const canMarkOutcome = canEditOutcome(part);
 
-                          const outcome = part.resultado_formacion || 'Marcar';
+                          const outcome = session.training_model === 'split_ojt' && phase === 'ojt'
+                            ? part.resultado_formacion_ojt || 'Marcar' : part.resultado_formacion || 'Marcar';
+                          const outcomeComment = phase === 'ojt' ? part.comentario_aptitud_ojt : part.comentario_aptitud;
+                          const outcomeReason = phase === 'ojt' ? part.motivo_no_apt_ojt : part.motivo_no_apt;
 
                           if (canMarkOutcome) {
                             return (
@@ -1556,17 +1562,17 @@ export default function AttendanceControl({
                                   <option value="Apto">Apto</option>
                                   <option value="No apto">No apto</option>
                                 </select>
-                                {outcome === 'Apto' && part.comentario_aptitud && (
-                                  <span className="text-[9px] text-emerald-600 max-w-[120px] truncate block italic font-medium" title={part.comentario_aptitud}>
-                                    {part.comentario_aptitud}
+                                {outcome === 'Apto' && outcomeComment && (
+                                  <span className="text-[9px] text-emerald-600 max-w-[120px] truncate block italic font-medium" title={outcomeComment}>
+                                    {outcomeComment}
                                   </span>
                                 )}
-                                {outcome === 'No apto' && part.motivo_no_apt && (
-                                  <span className="text-[9px] text-rose-600 max-w-[120px] truncate block italic font-medium" title={part.motivo_no_apt}>
-                                    {part.motivo_no_apt}
+                                {outcome === 'No apto' && outcomeReason && (
+                                  <span className="text-[9px] text-rose-600 max-w-[120px] truncate block italic font-medium" title={outcomeReason}>
+                                    {outcomeReason}
                                   </span>
                                 )}
-                                {outcome !== 'Apto' && (
+                                {session.training_model !== 'split_ojt' && outcome !== 'Apto' && (
                                   <button
                                     onClick={() => handleEarlyAlta(part)}
                                     className="mt-1 inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[9px] font-black uppercase text-emerald-700 hover:bg-emerald-100 cursor-pointer"
@@ -1589,14 +1595,14 @@ export default function AttendanceControl({
                                 }`}>
                                   {outcome}
                                 </span>
-                                {outcome === 'Apto' && part.comentario_aptitud && (
-                                  <span className="text-[9px] text-slate-400 max-w-[120px] truncate block italic mt-0.5" title={part.comentario_aptitud}>
-                                    {part.comentario_aptitud}
+                                {outcome === 'Apto' && outcomeComment && (
+                                  <span className="text-[9px] text-slate-400 max-w-[120px] truncate block italic mt-0.5" title={outcomeComment}>
+                                    {outcomeComment}
                                   </span>
                                 )}
-                                {outcome === 'No apto' && part.motivo_no_apt && (
-                                  <span className="text-[9px] text-slate-400 max-w-[120px] truncate block italic mt-0.5" title={part.motivo_no_apt}>
-                                    {part.motivo_no_apt}
+                                {outcome === 'No apto' && outcomeReason && (
+                                  <span className="text-[9px] text-slate-400 max-w-[120px] truncate block italic mt-0.5" title={outcomeReason}>
+                                    {outcomeReason}
                                   </span>
                                 )}
                               </div>
@@ -1605,8 +1611,22 @@ export default function AttendanceControl({
                         })()}
                       </td>
 
+                      {session.training_model === 'split_ojt' && phase === 'ojt' && (
+                        <td className="p-2 text-center">
+                          <input type="number" min="0" step="1" defaultValue={part.ventas_ojt ?? ''}
+                            disabled={!onUpdateParticipantDetails || !canEditOutcome(part)}
+                            onBlur={(event) => {
+                              const value = event.currentTarget.value.trim();
+                              if (value !== '' && (!Number.isInteger(Number(value)) || Number(value) < 0)) return;
+                              if (Number(value || 0) !== (part.ventas_ojt || 0))
+                                void onUpdateParticipantDetails?.({ ...part, ventas_ojt: Number(value || 0) });
+                            }}
+                            className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-center text-xs disabled:bg-slate-100" />
+                        </td>
+                      )}
+
                       {/* Final status display */}
-                      <td className="p-4">
+                      {(session.training_model !== 'split_ojt' || phase === 'ojt') && <td className="p-4">
                         <span className={`px-2 py-1 rounded-full font-bold text-[10px] ${
                           computedStatus === 'Alta confirmada' ? 'bg-emerald-100 text-emerald-800' :
                           computedStatus === 'En formación' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
@@ -1617,7 +1637,7 @@ export default function AttendanceControl({
                         }`}>
                           {computedStatus}
                         </span>
-                      </td>
+                      </td>}
 
                       {/* Observation/Deserción Reason info */}
                       <td className="p-4 max-w-[150px] truncate">

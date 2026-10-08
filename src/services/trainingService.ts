@@ -5,6 +5,7 @@ import type {
   Participant,
   TrainingSession,
   TrainingSurvey,
+  OjtModule,
 } from '../types';
 
 const API_BASE_URL =
@@ -57,3 +58,15 @@ export const appendTrainingParticipants = (
   method: 'POST',
   body: JSON.stringify({ participants, attendance }),
 });
+
+export const assignOjt = (sessionId: string) =>
+  request(`/api/trainings/${sessionId}/assign-ojt`, { method: 'POST' }) as Promise<{
+    module: OjtModule;
+    session: TrainingSession;
+  }>;
+
+export const updateOjtModule = (moduleId: string, changes: Partial<Pick<OjtModule, 'nombre' | 'estado' | 'hora_capacitacion' | 'turno' | 'modalidad'>>) =>
+  request(`/api/trainings/ojt/${moduleId}`, { method: 'PATCH', body: JSON.stringify(changes) }) as Promise<{ module: OjtModule }>;
+
+export const deleteOjtModule = (moduleId: string) =>
+  request(`/api/trainings/ojt/${moduleId}`, { method: 'DELETE' });

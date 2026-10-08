@@ -11,6 +11,7 @@ export interface CreatePlatformUserData {
   estado: 'Activo' | 'Inactivo';
   areas?: User['areas'];
   module_access?: string[];
+  module_view_only?: string[];
 }
 
 type PlatformUserProfile = Omit<User, 'password'>;

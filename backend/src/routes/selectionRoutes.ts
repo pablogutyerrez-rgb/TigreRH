@@ -789,11 +789,21 @@ router.post(
     const formadorId = trainerAssignment.primaryId;
     const formadorNombre = trainerAssignment.primaryName;
     const fechaInicio = normalize(training.fecha_inicio || requisition.training_fecha_inicio);
-    const fechaFin = normalize(training.fecha_fin || requisition.training_fecha_fin);
-    if (!formadorId || !formadorNombre || !fechaInicio || !fechaFin) {
+    if (!formadorId || !formadorNombre || !fechaInicio) {
       res.status(400).json({ message: 'Completa formador, fecha de inicio y fecha de fin para crear la capacitación.' });
       return;
     }
+    const startDate = new Date(`${fechaInicio}T12:00:00`);
+    if (Number.isNaN(startDate.getTime()) || [0, 6].includes(startDate.getDay())) {
+      res.status(400).json({ message: 'La capacitacion debe iniciar de lunes a viernes.' });
+      return;
+    }
+    let businessDays = 1;
+    while (businessDays < 5) {
+      startDate.setDate(startDate.getDate() + 1);
+      if (![0, 6].includes(startDate.getDay())) businessDays += 1;
+    }
+    const fechaFin = startDate.toISOString().slice(0, 10);
 
     const applicantDocs = await Promise.all(
       parsed.data.applicantIds.map((id) => adminDb.collection(COLLECTIONS.applicants).doc(id).get()),
@@ -821,6 +831,8 @@ router.post(
       tipo_capacitacion: normalize(training.tipo_capacitacion || requisition.training_tipo || 'Capacitación regular'),
       fecha_inicio: fechaInicio,
       fecha_fin: fechaFin,
+      training_days: 5,
+      training_model: 'split_ojt',
       formador_id: formadorId,
       formador_nombre: formadorNombre,
       formador_ids: trainerAssignment.ids,
@@ -893,7 +905,14 @@ router.post(
           participant_id: participantId,
           training_session_id: sessionId,
           dia: day,
-          fecha: fechaInicio,
+          fecha: (() => {
+            const date = new Date(`${fechaInicio}T12:00:00`);
+            for (let index = 1; index < day;) {
+              date.setDate(date.getDate() + 1);
+              if (![0, 6].includes(date.getDay())) index += 1;
+            }
+            return date.toISOString().slice(0, 10);
+          })(),
           estado_asistencia: 'Seleccionar',
           registrado_por: req.user!.uid,
           fecha_registro: timestamp,

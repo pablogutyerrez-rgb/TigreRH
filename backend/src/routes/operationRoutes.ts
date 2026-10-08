@@ -157,8 +157,12 @@ router.put(
         }
         sessions.set(sessionId, session.data());
       }
+      if (sessions.get(sessionId)?.training_model === 'split_ojt' && Number(record.dia) >= 6 && !sessions.get(sessionId)?.ojt_module_id) {
+        res.status(409).json({ message: 'Asigna OJT antes de registrar esta asistencia.' });
+        return;
+      }
       if (
-        req.user!.rol === 'Formador' &&
+        ['Formador', 'Analista'].includes(req.user!.rol) &&
         !canTrainerEditAttendanceDay(sessions.get(sessionId), req.user!.uid, Number(record.dia))
       ) {
         res.status(403).json({ message: 'Uno de los dias no corresponde a tu fase asignada.' });
@@ -185,8 +189,12 @@ router.put(
       res.status(403).json({ message: 'No puedes modificar esta asistencia.' });
       return;
     }
-    if (req.user!.rol === 'Formador') {
-      const session = await adminDb.collection('sessions').doc(parsed.data.training_session_id).get();
+    const session = await adminDb.collection('sessions').doc(parsed.data.training_session_id).get();
+    if (session.data()?.training_model === 'split_ojt' && Number(parsed.data.dia) >= 6 && !session.data()?.ojt_module_id) {
+      res.status(409).json({ message: 'Asigna OJT antes de registrar esta asistencia.' });
+      return;
+    }
+    if (['Formador', 'Analista'].includes(req.user!.rol)) {
       if (!canTrainerEditAttendanceDay(session.data(), req.user!.uid, Number(parsed.data.dia))) {
         res.status(403).json({ message: 'Este día de asistencia no corresponde a tu fase asignada.' });
         return;
@@ -297,6 +305,23 @@ router.put(
       res.status(403).json({ message: 'No puedes modificar esta alta.' });
       return;
     }
+    if (parsed.data.estado_alta === 'Alta confirmada' && req.user!.rol !== 'Administrador') {
+      res.status(403).json({ message: 'Solo Admin puede confirmar altas.' });
+      return;
+    }
+    if (parsed.data.estado_alta === 'Alta confirmada') {
+      const session = await adminDb.collection('sessions').doc(parsed.data.training_session_id).get();
+      if (session.data()?.training_model === 'split_ojt') {
+        const participant = await adminDb.collection('participants').doc(String(parsed.data.participant_id || '')).get();
+        const dayTen = await adminDb.collection('attendance').where('participant_id', '==', parsed.data.participant_id).get();
+        if (!session.data()?.ojt_module_id || participant.data()?.training_session_id !== parsed.data.training_session_id ||
+          !dayTen.docs.some((record) => record.data().training_session_id === parsed.data.training_session_id &&
+            Number(record.data().dia) === 10 && ['Asistió', 'Tardanza', 'Feriado'].includes(record.data().estado_asistencia))) {
+          res.status(409).json({ message: 'El postulante aun no culmina el OJT.' });
+          return;
+        }
+      }
+    }
 
     const nextParticipantStatus =
       parsed.data.estado_alta === 'Alta confirmada'
@@ -331,6 +356,15 @@ router.put(
       res.status(403).json({ message: 'No puedes modificar este participante.' });
       return;
     }
+    const currentParticipant = await adminDb.collection('participants').doc(req.params.id).get();
+    const currentData = currentParticipant.data();
+    if (req.user!.rol !== 'Administrador' &&
+      ((parsed.data.estado_alta === 'Alta confirmada' && currentData?.estado_alta !== 'Alta confirmada') ||
+        (parsed.data.estado_final === 'Alta confirmada' && currentData?.estado_final !== 'Alta confirmada') ||
+        (currentData?.estado_alta === 'Alta confirmada' && parsed.data.estado_alta && parsed.data.estado_alta !== 'Alta confirmada'))) {
+      res.status(403).json({ message: 'Solo Admin puede confirmar altas.' });
+      return;
+    }
     if (req.user!.rol === 'Formador') {
       const session = await adminDb.collection('sessions').doc(parsed.data.training_session_id).get();
       const sessionData = session.data();
@@ -338,12 +372,24 @@ router.put(
       if (isInitialTrainer(sessionData, req.user!.uid)) {
         allowed.evaluacion_nota = parsed.data.evaluacion_nota;
         allowed.observacion_evaluacion = parsed.data.observacion_evaluacion;
+        if (sessionData?.training_model === 'split_ojt') {
+          allowed.resultado_formacion = parsed.data.resultado_formacion;
+          allowed.comentario_aptitud = parsed.data.comentario_aptitud;
+          allowed.motivo_no_apt = parsed.data.motivo_no_apt;
+        }
       }
       if (isOjtTrainer(sessionData, req.user!.uid)) {
-        allowed.resultado_formacion = parsed.data.resultado_formacion;
-        allowed.comentario_aptitud = parsed.data.comentario_aptitud;
-        allowed.motivo_no_apt = parsed.data.motivo_no_apt;
+        if (sessionData?.training_model === 'split_ojt') allowed.resultado_formacion_ojt = parsed.data.resultado_formacion_ojt;
+        else allowed.resultado_formacion = parsed.data.resultado_formacion;
+        if (sessionData?.training_model === 'split_ojt') {
+          allowed.comentario_aptitud_ojt = parsed.data.comentario_aptitud_ojt;
+          allowed.motivo_no_apt_ojt = parsed.data.motivo_no_apt_ojt;
+        } else {
+          allowed.comentario_aptitud = parsed.data.comentario_aptitud;
+          allowed.motivo_no_apt = parsed.data.motivo_no_apt;
+        }
         allowed.estado_final = parsed.data.estado_final;
+        allowed.ventas_ojt = parsed.data.ventas_ojt;
       }
       const sanitized = Object.fromEntries(Object.entries(allowed).filter(([, value]) => value !== undefined));
       if (Object.keys(sanitized).length === 0) {
@@ -353,6 +399,15 @@ router.put(
       await adminDb.collection('participants').doc(req.params.id).set(sanitized, { merge: true });
       res.json({ ok: true });
       return;
+    }
+    if (req.user!.rol === 'Analista') {
+      const session = await adminDb.collection('sessions').doc(parsed.data.training_session_id).get();
+      if (isInitialTrainer(session.data(), req.user!.uid) || isOjtTrainer(session.data(), req.user!.uid)) {
+        const { estado_alta, ...safeData } = parsed.data;
+        await adminDb.collection('participants').doc(req.params.id).set(safeData, { merge: true });
+        res.json({ ok: true });
+        return;
+      }
     }
     await adminDb.collection('participants').doc(req.params.id).set(parsed.data, { merge: true });
     res.json({ ok: true });

@@ -10,11 +10,13 @@ import type {
   TrainingSession,
   TrainingSurvey,
   User,
+  OjtModule,
 } from '../types';
 
 export interface BootstrapData {
   users: User[];
   sessions: TrainingSession[];
+  ojt_modules: OjtModule[];
   participants: Participant[];
   attendance: AttendanceRecord[];
   confirmations: OperationConfirmation[];

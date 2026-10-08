@@ -20,6 +20,7 @@ export interface User {
   requiere_cambio_password?: boolean;
   areas?: UserArea[];
   module_access?: string[];
+  module_view_only?: string[];
 }
 
 export type TrainingVariableEvaluationStatus = 'BORRADOR' | 'CERRADO' | 'REABIERTO' | 'ANULADO';
@@ -128,6 +129,28 @@ export interface TrainingSession {
   fecha_creacion: string;
   generation_code?: string;
   training_days?: 5 | 10;
+  training_model?: 'split_ojt';
+  ojt_module_id?: string;
+  ojt_assigned_at?: string;
+}
+
+export interface OjtModule {
+  id: string;
+  grupo: 'Entel' | 'Culqi' | 'Equifax' | 'Tigre Academy';
+  nombre: string;
+  estado: 'Abierto' | 'Cerrado';
+  generation_ids: string[];
+  generation_codes: string[];
+  participant_ids: string[];
+  formador_ojt_ids: string[];
+  formador_ojt_nombres: string[];
+  fecha_inicio: string;
+  fecha_fin: string;
+  hora_capacitacion: string;
+  turno: TrainingSession['turno'];
+  modalidad: TrainingSession['modalidad'];
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Participant {
@@ -179,8 +202,13 @@ export interface Participant {
 
   // Resultado de formación
   resultado_formacion?: 'Marcar' | 'Apto' | 'No apto';
+  resultado_formacion_ojt?: 'Marcar' | 'Apto' | 'No apto';
+  ventas_ojt?: number;
+  observacion_ojt?: string;
   comentario_aptitud?: string;
   motivo_no_apt?: string;
+  comentario_aptitud_ojt?: string;
+  motivo_no_apt_ojt?: string;
   evaluacion_nota?: number | null;
   observacion_evaluacion?: string;
 

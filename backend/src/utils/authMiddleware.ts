@@ -16,6 +16,7 @@ export interface AuthenticatedUser {
   requiere_cambio_password: boolean;
   areas: string[];
   module_access: string[];
+  module_view_only: string[];
 }
 
 export interface AuthenticatedRequest extends Request {
@@ -93,6 +94,7 @@ export const requireAuth = async (
       requiere_cambio_password: profile?.requiere_cambio_password === true,
       areas: Array.isArray(profile?.areas) ? profile.areas.map(String) : [],
       module_access: Array.isArray(profile?.module_access) ? profile.module_access.map(String) : [],
+      module_view_only: Array.isArray(profile?.module_view_only) ? profile.module_view_only.map(String) : [],
     };
 
     next();
@@ -130,6 +132,15 @@ export const requireRoleOrModule = (roles: string[], moduleId: string) =>
     }
     if (!roles.includes(req.user.rol) && !req.user.module_access.includes(moduleId)) {
       res.status(403).json({ message: 'No tienes permisos para esta accion.' });
+      return;
+    }
+    next();
+  };
+
+export const requireWritableModule = (moduleId: string) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    if (req.user?.module_view_only.includes(moduleId)) {
+      res.status(403).json({ message: 'Este apartado es de solo vista.' });
       return;
     }
     next();

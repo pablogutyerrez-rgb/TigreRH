@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -17,7 +17,8 @@ import {
   AttendanceStatus,
   TrainingSurvey,
   SurveyResponse,
-  SurveyStatus
+  SurveyStatus,
+  OjtModule,
 } from './types';
 
 // Icons
@@ -82,6 +83,9 @@ import {
 import { getBootstrapData } from './services/bootstrapService';
 import {
   appendTrainingParticipants,
+  assignOjt,
+  updateOjtModule,
+  deleteOjtModule,
   createTrainingBundle,
   deleteTraining,
   updateTraining,
@@ -98,7 +102,7 @@ import {
 import { createSurveyRemote, updateSurveyLinkAssignmentsRemote, updateSurveyStatusRemote } from './services/surveyService';
 import { APP_NAME } from './constants/app';
 import loginBackgroundVideo from './assets/login-background.mp4';
-import { CURRENT_TRAINING_DAYS_COUNT, getTrainingDays, getTrainingDaysCount } from './utils/trainingDays';
+import { getBusinessDayDate, getSessionDayDate, getTrainingDays, getTrainingDaysCount } from './utils/trainingDays';
 
 const normalizeAttendanceStatus = (status?: string) =>
   (status || '')
@@ -233,6 +237,7 @@ export default function App() {
   // --- Persistent States ---
   const [users, setUsers] = useState<User[]>(EMPTY_USERS);
   const [sessions, setSessions] = useState<TrainingSession[]>(EMPTY_SESSIONS);
+  const [ojtModules, setOjtModules] = useState<OjtModule[]>([]);
   const [participants, setParticipants] = useState<Participant[]>(EMPTY_PARTICIPANTS);
   const participantsRef = useRef<Participant[]>(participants);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>(EMPTY_ATTENDANCE);
@@ -248,7 +253,7 @@ export default function App() {
 
   // Reactive calculation of participant final state
   useEffect(() => {
-    const sessionsById = new Map(sessions.map(session => [session.id, session]));
+    const sessionsById = new Map<string, TrainingSession>(sessions.map(session => [session.id, session]));
     const attendanceByParticipantSession = new Map<string, Map<number, AttendanceRecord>>();
     for (const record of attendance) {
       const key = `${record.participant_id}\u0000${record.training_session_id}`;
@@ -277,10 +282,15 @@ export default function App() {
         const recordsByDay = attendanceByParticipantSession.get(`${p.id}\u0000${p.training_session_id}`);
         const activeConfirmation = confirmationByParticipant.get(p.id);
         
-        const days = getTrainingDays(session).map(d => {
+        const trackedDays = session?.training_model === 'split_ojt' && session.ojt_module_id
+          ? Array.from({ length: 10 }, (_, index) => index + 1)
+          : getTrainingDays(session);
+        const days = trackedDays.map(d => {
           const rec = recordsByDay?.get(d);
           return rec ? rec.estado_asistencia : 'Pendiente';
         });
+        const finishedOjt = session?.training_model === 'split_ojt' && session.ojt_module_id &&
+          isPresentAttendance(recordsByDay?.get(10)?.estado_asistencia);
 
         let computedStatus: Participant['estado_final'] = 'Pendiente de gestión';
 
@@ -290,7 +300,7 @@ export default function App() {
           computedStatus = 'Completó capacitación';
         } else if (days.some(isDropoutAttendanceStatus)) {
           computedStatus = 'Desistió';
-        } else if (p.resultado_formacion === 'No apto') {
+        } else if ((session?.training_model === 'split_ojt' ? p.resultado_formacion_ojt : p.resultado_formacion) === 'No apto') {
           computedStatus = 'Completó capacitación';
         } else if (days.every(isPendingAttendance)) {
           computedStatus = 'Pendiente de gestión';
@@ -302,7 +312,7 @@ export default function App() {
             computedStatus = 'No asistió';
           } else if (hasEverAttended && days.some(isAbsenceAttendance)) {
             computedStatus = 'En riesgo';
-          } else if (days.every(isPresentAttendance)) {
+          } else if (finishedOjt || (session?.training_model !== 'split_ojt' && days.every(isPresentAttendance))) {
             computedStatus = 'Pendiente de alta';
           } else if (hasEverAttended) {
             computedStatus = 'En formación';
@@ -334,6 +344,7 @@ export default function App() {
   // --- Navigation States ---
   const [currentView, setCurrentView] = useState<string>('dashboard');
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [attendancePhase, setAttendancePhase] = useState<'initial' | 'ojt'>('initial');
   const [selectionView, setSelectionView] = useState<SelectionViewMode>('dashboard');
   const [platformReloadKey, setPlatformReloadKey] = useState(0);
 
@@ -543,6 +554,7 @@ export default function App() {
         if (cancelled) return;
         setUsers(data.users);
         setSessions(data.sessions);
+        setOjtModules(data.ojt_modules || []);
         setParticipants(data.participants);
         setAttendance(data.attendance);
         setConfirmations(data.confirmations);
@@ -665,7 +677,9 @@ export default function App() {
       generation_code: trainingIdentifier,
       formador_nombre: fUser ? fUser.nombre : 'Sin formador',
       reclutador_nombre: rUser ? rUser.nombre : 'Sin reclutador',
-      training_days: CURRENT_TRAINING_DAYS_COUNT,
+      training_days: 5,
+      training_model: 'split_ojt',
+      fecha_fin: getBusinessDayDate(newSess.fecha_inicio, 5),
       fecha_creacion: new Date().toISOString()
     };
 
@@ -697,14 +711,7 @@ export default function App() {
     const sessionTrainingDays = getTrainingDays(sessionObj);
     partsWithId.forEach(p => {
       for (const dayNum of sessionTrainingDays) {
-        let recDate = newSess.fecha_inicio;
-        try {
-          const baseDate = new Date(newSess.fecha_inicio + 'T12:00:00');
-          baseDate.setDate(baseDate.getDate() + (dayNum - 1));
-          recDate = baseDate.toISOString().split('T')[0];
-        } catch (e) {
-          // fallback
-        }
+        const recDate = getSessionDayDate(sessionObj, dayNum);
 
         const attKey = `asistencia_dia_${dayNum}` as keyof typeof p;
         const obsKey = `observacion_dia_${dayNum}` as keyof typeof p;
@@ -858,7 +865,7 @@ export default function App() {
     if (!session) return;
 
     const userRol = activeUser?.rol;
-    if (userRol !== 'Administrador' && userRol !== 'Formador' && userRol !== 'Analista') {
+    if (userRol !== 'Administrador') {
       alert('No tiene permisos para realizar el cierre de la capacitación.');
       return;
     }
@@ -960,14 +967,14 @@ export default function App() {
       updatedFields.formador_id,
     ].filter(Boolean))) as string[];
     const assignedTrainers = assignedTrainerIds
-      .map((trainerId) => users.find((user) => user.id === trainerId && user.rol === 'Formador'))
+      .map((trainerId) => users.find((user) => user.id === trainerId && ['Formador', 'Analista'].includes(user.rol)))
       .filter((trainer): trainer is User => Boolean(trainer));
     const formador = assignedTrainers[0];
     const initialTrainers = initialTrainerIds
-      .map((trainerId) => users.find((user) => user.id === trainerId && user.rol === 'Formador'))
+      .map((trainerId) => users.find((user) => user.id === trainerId && ['Formador', 'Analista'].includes(user.rol)))
       .filter((trainer): trainer is User => Boolean(trainer));
     const ojtTrainers = ojtTrainerIds
-      .map((trainerId) => users.find((user) => user.id === trainerId && user.rol === 'Formador'))
+      .map((trainerId) => users.find((user) => user.id === trainerId && ['Formador', 'Analista'].includes(user.rol)))
       .filter((trainer): trainer is User => Boolean(trainer));
     const primaryTrainer = initialTrainers[0] || formador;
     const reclutador = updatedFields.reclutador_id
@@ -1091,13 +1098,7 @@ export default function App() {
 
   const getTrainingDayDate = (session: TrainingSession | undefined, day: number) => {
     if (!session?.fecha_inicio) return new Date().toISOString().split('T')[0];
-    try {
-      const baseDate = new Date(`${session.fecha_inicio}T12:00:00`);
-      baseDate.setDate(baseDate.getDate() + (day - 1));
-      return baseDate.toISOString().split('T')[0];
-    } catch {
-      return session.fecha_inicio;
-    }
+    return getSessionDayDate(session, day);
   };
 
   const buildDropoutContinuationRecords = (
@@ -1105,7 +1106,7 @@ export default function App() {
     session: TrainingSession | undefined,
     participantIds: string[],
   ): AttendanceRecord[] => {
-    const trainingDaysCount = getTrainingDaysCount(session);
+    const trainingDaysCount = session?.training_model === 'split_ojt' && baseRecord.dia >= 6 ? 10 : getTrainingDaysCount(session);
     if (!isDropoutAttendance(baseRecord.estado_asistencia) || baseRecord.dia >= trainingDaysCount) return [];
     const now = new Date().toISOString();
     const futureDays = Array.from({ length: trainingDaysCount - baseRecord.dia }, (_, index) => baseRecord.dia + index + 1);
@@ -1388,19 +1389,28 @@ export default function App() {
     const sess = sessions.find(s => s.id === part.training_session_id);
     if (!sess || !activeUser) return;
     const canEditScore = activeUser.rol === 'Administrador' ||
-      (activeUser.rol === 'Formador' && isSessionInitialTrainer(sess, activeUser.id));
+      (['Formador', 'Analista'].includes(activeUser.rol) && isSessionInitialTrainer(sess, activeUser.id));
     const canEditOutcome = activeUser.rol === 'Administrador' ||
-      (activeUser.rol === 'Formador' && isSessionOjtTrainer(sess, activeUser.id));
+      (['Formador', 'Analista'].includes(activeUser.rol) &&
+        (sess.training_model === 'split_ojt' && attendancePhase === 'initial'
+          ? isSessionInitialTrainer(sess, activeUser.id)
+          : isSessionOjtTrainer(sess, activeUser.id)));
     const evaluationRequested = evaluationScore !== undefined || evaluationObservation.trim().length > 0;
     const nextParticipant: Participant = {
       ...part,
-      resultado_formacion: canEditOutcome ? outcome : part.resultado_formacion,
-      comentario_aptitud: canEditOutcome ? (outcome === 'Apto' ? comment : '') : part.comentario_aptitud,
-      motivo_no_apt: canEditOutcome ? (outcome === 'No apto' ? reason : '') : part.motivo_no_apt,
+      resultado_formacion: canEditOutcome && (sess.training_model !== 'split_ojt' || attendancePhase === 'initial') ? outcome : part.resultado_formacion,
+      resultado_formacion_ojt: canEditOutcome && sess.training_model === 'split_ojt' && attendancePhase === 'ojt' ? outcome : part.resultado_formacion_ojt,
+      comentario_aptitud: canEditOutcome && attendancePhase !== 'ojt' ? (outcome === 'Apto' ? comment : '') : part.comentario_aptitud,
+      motivo_no_apt: canEditOutcome && attendancePhase !== 'ojt' ? (outcome === 'No apto' ? reason : '') : part.motivo_no_apt,
+      comentario_aptitud_ojt: canEditOutcome && attendancePhase === 'ojt' ? (outcome === 'Apto' ? comment : '') : part.comentario_aptitud_ojt,
+      motivo_no_apt_ojt: canEditOutcome && attendancePhase === 'ojt' ? (outcome === 'No apto' ? reason : '') : part.motivo_no_apt_ojt,
       evaluacion_nota: canEditScore && evaluationRequested ? evaluationScore ?? null : part.evaluacion_nota,
       observacion_evaluacion: canEditScore && evaluationRequested ? evaluationObservation : part.observacion_evaluacion,
-      estado_final: canEditOutcome
-        ? (outcome === 'Apto' ? 'Pendiente de alta' : (outcome === 'No apto' ? 'Completó capacitación' : part.estado_final))
+      estado_final: canEditOutcome && (sess.training_model !== 'split_ojt' || attendancePhase === 'ojt')
+        ? (outcome === 'Apto'
+          ? (sess.training_model !== 'split_ojt' || attendance.some((record) => record.participant_id === pId && record.dia === 10 && isPresentAttendance(record.estado_asistencia))
+            ? 'Pendiente de alta' : 'En formación')
+          : (outcome === 'No apto' ? 'Completó capacitación' : part.estado_final))
         : part.estado_final,
     };
     void persistParticipant(nextParticipant).catch((error) => {
@@ -1740,6 +1750,7 @@ export default function App() {
       estado: newUser.estado,
       areas: newUser.areas,
       module_access: newUser.module_access,
+      module_view_only: newUser.module_view_only,
       correo: newUser.correo || '',
     });
 
@@ -1901,14 +1912,12 @@ export default function App() {
     const sessionTrainingDays = getTrainingDays(session);
     const createdAttendance = created.filter((participant) => newIds.has(participant.id)).flatMap((participant) =>
       sessionTrainingDays.map((day) => {
-        const date = new Date(`${session.fecha_inicio}T12:00:00`);
-        date.setDate(date.getDate() + day - 1);
         return {
           id: `att-${Math.random().toString(36).substring(2, 11)}`,
           participant_id: participant.id,
           training_session_id: sessionId,
           dia: day,
-          fecha: date.toISOString().split('T')[0],
+          fecha: getSessionDayDate(session, day),
           estado_asistencia: 'Seleccionar' as AttendanceStatus,
           registrado_por: activeUser.id,
           fecha_registro: new Date().toISOString(),
@@ -1959,15 +1968,36 @@ export default function App() {
   };
 
   // --- Views Router Handler ---
-  const handleViewAttendance = (sessionId: string) => {
+  const handleViewAttendance = (sessionId: string, phase: 'initial' | 'ojt' = 'initial') => {
     setSelectedSessionId(sessionId);
+    setAttendancePhase(phase);
     setCurrentView('asistencia');
+  };
+
+  const handleAssignOjt = async (sessionId: string) => {
+    const saved = await assignOjt(sessionId);
+    setSessions((current) => current.map((item) => item.id === sessionId ? saved.session : item));
+    setOjtModules((current) => [saved.module, ...current.filter((item) => item.id !== saved.module.id)]);
+    setPlatformReloadKey((value) => value + 1);
+  };
+
+  const handleUpdateOjtModule = async (moduleId: string, changes: Partial<OjtModule>) => {
+    const saved = await updateOjtModule(moduleId, changes);
+    setOjtModules((current) => current.map((item) => item.id === moduleId ? saved.module : item));
+  };
+
+  const handleDeleteOjtModule = async (moduleId: string) => {
+    await deleteOjtModule(moduleId);
+    setOjtModules((current) => current.filter((item) => item.id !== moduleId));
+    setSessions((current) => current.map((item) => item.ojt_module_id === moduleId ? { ...item, ojt_module_id: undefined } : item));
   };
 
   const activeSession = sessions.find(s => s.id === selectedSessionId);
 
   // Extract list of unique trainers and recruiters
-  const trainersList = users.filter(u => u.rol === 'Formador' && u.estado === 'Activo');
+  const trainersList = users.filter(u =>
+    u.estado === 'Activo' && (u.rol === 'Formador' ||
+      (u.rol === 'Analista' && u.module_access?.includes('formacion:asistencia'))));
   const recruitersList = users.filter(
     u => ['Reclutador', 'Analista'].includes(u.rol) && u.estado === 'Activo',
   );
@@ -2407,6 +2437,8 @@ export default function App() {
                   </div>
                   <Capacitaciones
                     sessions={sessions}
+                    ojtModules={ojtModules}
+                    confirmations={confirmations}
                     participants={participants}
                     attendance={attendance}
                     surveys={surveys}
@@ -2417,6 +2449,9 @@ export default function App() {
                     onAddSession={handleAddSession}
                     onDeleteSession={handleDeleteSession}
                     onViewAttendance={handleViewAttendance}
+                    onAssignOjt={handleAssignOjt}
+                    onUpdateOjtModule={handleUpdateOjtModule}
+                    onDeleteOjtModule={handleDeleteOjtModule}
                     onCloseCampaign={handleCloseCampaign}
                     onUpdateSession={handleUpdateSession}
                     onAppendParticipants={handleAppendParticipants}
@@ -2452,6 +2487,8 @@ export default function App() {
               {currentView === 'capacitaciones' && userHasModuleAccess(activeUser, 'formacion', 'capacitaciones') && (
                 <Capacitaciones
                   sessions={sessions}
+                  ojtModules={ojtModules}
+                  confirmations={confirmations}
                   participants={participants}
                   attendance={attendance}
                   surveys={surveys}
@@ -2462,6 +2499,9 @@ export default function App() {
                   onAddSession={handleAddSession}
                   onDeleteSession={handleDeleteSession}
                   onViewAttendance={handleViewAttendance}
+                  onAssignOjt={handleAssignOjt}
+                  onUpdateOjtModule={handleUpdateOjtModule}
+                  onDeleteOjtModule={handleDeleteOjtModule}
                   onCloseCampaign={handleCloseCampaign}
                   onUpdateSession={handleUpdateSession}
                   onAppendParticipants={handleAppendParticipants}
@@ -2473,6 +2513,7 @@ export default function App() {
               {currentView === 'asistencia' && activeSession && userHasModuleAccess(activeUser, 'formacion', 'asistencia') && (
                 <AttendanceControl
                   session={activeSession}
+                  phase={attendancePhase}
                   participants={participants}
                   attendance={attendance}
                   confirmations={confirmations}
@@ -2496,6 +2537,7 @@ export default function App() {
                   sessions={sessions}
                   participants={participants}
                   confirmations={confirmations}
+                  attendance={attendance}
                   currentUser={activeUser}
                   coordinators={users.filter((user) => user.rol === 'Coordinador' && user.estado === 'Activo')}
                   onSaveConfirmation={handleSaveConfirmation}

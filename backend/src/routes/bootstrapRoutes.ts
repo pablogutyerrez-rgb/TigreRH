@@ -95,6 +95,7 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
       allLogs,
       allSurveys,
       allResponses,
+      allOjtModules,
     ] = await Promise.all([
       readCollection('users'),
       readCollection('sessions'),
@@ -105,6 +106,7 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
       readCollection('logs'),
       readCollection('surveys'),
       readCollection('responses'),
+      readCollection('ojt_modules'),
     ]);
 
     const sessions = canSeeAllSessions
@@ -186,6 +188,10 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
                 ['Analista', 'Coordinador', 'Formador', 'Reclutador'].includes(String(profile.rol)),
             ),
       sessions,
+      ojt_modules: allOjtModules.filter((module) =>
+        user.rol === 'Administrador' ||
+        (Array.isArray(module.generation_ids) && module.generation_ids.some((id) => sessionIds.has(String(id)))),
+      ),
       participants,
       attendance: allAttendance.filter(
         (record) =>

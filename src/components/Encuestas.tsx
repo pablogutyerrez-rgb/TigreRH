@@ -48,6 +48,7 @@ import {
 } from 'recharts';
 import * as XLSX from 'xlsx';
 import { permissions } from '../utils/permissions';
+import { filterSurveys } from '../utils/surveyFilters';
 import { isSurveyEligibleParticipant } from '../utils/trainingProgress';
 import { getSessionTrainerIds, getSessionTrainerNames, isSessionAssignedTrainer } from '../utils/trainingAssignments';
 
@@ -258,13 +259,18 @@ export default function Encuestas({
     );
   }, [surveys, visibleSessionIds, currentUser.id]);
 
-  const assignedLinkSurveys = useMemo(() => visibleSurveys.filter((survey) => {
+  const filteredSurveys = useMemo(() => filterSurveys(visibleSurveys, sessions, {
+    campaign: filterCampaign, generation: filterGenerator, trainer: filterTrainer,
+    type: filterType, from: dateStart, to: dateEnd,
+  }), [visibleSurveys, sessions, filterCampaign, filterGenerator, filterTrainer, filterType, dateStart, dateEnd]);
+
+  const assignedLinkSurveys = useMemo(() => filteredSurveys.filter((survey) => {
     if (survey.estado !== 'Habilitada') return false;
     if (isAdmin) return true;
     if (survey.link_assigned_user_ids?.includes(currentUser.id)) return true;
     const session = getSurveySession(survey);
     return Boolean(session && isSessionAssignedTrainer(session, currentUser.id));
-  }), [visibleSurveys, currentUser.id, isAdmin, sessions]);
+  }), [filteredSurveys, currentUser.id, isAdmin, sessions]);
 
   const assignableUsers = useMemo(
     () => users.filter((user) => user.estado === 'Activo' && user.id !== currentUser.id),
@@ -289,34 +295,11 @@ export default function Encuestas({
 
   // General filtered responses from non-deleted surveys
   const filteredResponses = useMemo(() => {
+    const surveyIds = new Set(filteredSurveys.filter((survey) => visibleSessionIds.includes(survey.training_session_id)).map((survey) => survey.id));
     return normalizedResponses.filter(r => {
-      const survey = surveys.find(s => s.id === r.training_survey_id);
-      if (!survey || survey.estado === 'Eliminada') return false;
-      if (!visibleSessionIds.includes(survey.training_session_id)) return false;
-
-      const session = sessions.find(s => s.id === survey.training_session_id);
-      const campaign = session?.campaña || survey.campaña || r.campaña;
-      const generation = session?.generation_code || session?.nombre_generacion || survey.codigo_generacion || r.codigo_generacion;
-      if (filterCampaign && normalizeFilterValue(campaign) !== normalizeFilterValue(filterCampaign)) return false;
-      if (filterGenerator && normalizeFilterValue(generation) !== normalizeFilterValue(filterGenerator)) return false;
-      if (filterTrainer && (!session || !getSessionTrainerIds(session).includes(filterTrainer))) return false;
-      if (filterType && normalizeFilterValue(session?.tipo_capacitacion) !== normalizeFilterValue(filterType)) return false;
-
-      // Date range filter
-      if (dateStart) {
-        const dResponse = new Date(r.fecha_respuesta);
-        const dStart = new Date(dateStart + 'T00:00:00');
-        if (dResponse < dStart) return false;
-      }
-      if (dateEnd) {
-        const dResponse = new Date(r.fecha_respuesta);
-        const dEnd = new Date(dateEnd + 'T23:59:59');
-        if (dResponse > dEnd) return false;
-      }
-
-      return true;
+      return surveyIds.has(r.training_survey_id);
     });
-  }, [normalizedResponses, surveys, sessions, visibleSessionIds, filterCampaign, filterGenerator, filterTrainer, filterType, dateStart, dateEnd]);
+  }, [normalizedResponses, filteredSurveys, visibleSessionIds]);
 
   // VALID RESPONSES ONLY (Habilitada or Cerrada surveys) FOR DASHBOARD CALCULATIONS
   const dashboardResponses = useMemo(() => {
@@ -328,20 +311,15 @@ export default function Encuestas({
 
   // --- CALCULATE DASHBOARD STATS AND KPIs ---
   const kpis = useMemo(() => {
-    const totalHabilitadas = visibleSurveys.filter(s => s.estado === 'Habilitada').length;
+    const totalHabilitadas = filteredSurveys.filter(s => s.estado === 'Habilitada').length;
     const totalRespuestas = dashboardResponses.length;
 
     // Get unique participants assigned to active or closed surveys
-    const activeSurveySessionIds = visibleSurveys
+    const activeSurveySessionIds = filteredSurveys
       .filter(s => s.estado === 'Habilitada' || s.estado === 'Cerrada')
       .map(s => s.training_session_id);
 
-    const filteredSessionIds = Array.from(new Set(dashboardResponses.map(r => {
-      const srv = surveys.find(s => s.id === r.training_survey_id);
-      return srv?.training_session_id;
-    }).filter(Boolean)));
-
-    const targetSessionIds = filteredSessionIds.length > 0 ? filteredSessionIds : activeSurveySessionIds;
+    const targetSessionIds = activeSurveySessionIds;
 
     const totalHabilitadosParticipants = participants.filter(p =>
       targetSessionIds.includes(p.training_session_id) &&
@@ -456,7 +434,7 @@ export default function Encuestas({
       bestGenName,
       bestGenScore: Number(bestGenScore.toFixed(2))
     };
-  }, [dashboardResponses, visibleSurveys, participants, surveys, anonymizeTrainers]);
+  }, [dashboardResponses, filteredSurveys, participants, surveys, anonymizeTrainers]);
 
   // Semáforo based on converted grade on 20:
   // Excelente (18-20), Bueno (15-17.99), Regular (11-14.99), Crítico (0-10.99)
@@ -724,12 +702,12 @@ export default function Encuestas({
   // --- MONITOREO STATUS MATH & CALCULATIONS ---
   // If no survey is selected yet, default to the first active survey if available
   const currentMonitoreoSurvey = useMemo(() => {
-    const activeAndClosedSurveys = visibleSurveys.filter(s => s.estado === 'Habilitada' || s.estado === 'Cerrada');
+    const activeAndClosedSurveys = filteredSurveys.filter(s => s.estado === 'Habilitada' || s.estado === 'Cerrada');
     if (monitoreoSurveyId) {
-      return visibleSurveys.find(s => s.id === monitoreoSurveyId);
+      return activeAndClosedSurveys.find(s => s.id === monitoreoSurveyId) || activeAndClosedSurveys[0] || null;
     }
     return activeAndClosedSurveys[0] || null;
-  }, [monitoreoSurveyId, visibleSurveys]);
+  }, [monitoreoSurveyId, filteredSurveys]);
 
   const monitoreoData = useMemo(() => {
     if (!currentMonitoreoSurvey) return null;
@@ -1481,7 +1459,7 @@ export default function Encuestas({
                 className="w-full bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-xl px-3.5 py-2 font-bold outline-hidden focus:ring-1 focus:ring-fuchsia-500"
               >
                 <option value="">Selecciona una campaña / generación...</option>
-                {visibleSurveys.filter(s => s.estado === 'Habilitada' || s.estado === 'Cerrada').map(s => (
+                {filteredSurveys.filter(s => s.estado === 'Habilitada' || s.estado === 'Cerrada').map(s => (
                   <option key={s.id} value={s.id}>
                     [{s.campaña}] {getSurveyGenerationCode(s)} - Formador: {getTrainerDisplayName(s.formador_id, s.formador_nombre)}
                   </option>
@@ -1709,12 +1687,12 @@ export default function Encuestas({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {visibleSurveys.length === 0 ? (
+                {filteredSurveys.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="p-6 text-center text-slate-400 font-bold">No hay encuestas registradas bajo tu alcance de vista.</td>
                   </tr>
                 ) : (
-                  visibleSurveys.map((s) => {
+                  filteredSurveys.map((s) => {
                     const isCopied = copiedSurveyId === s.id;
                     const origin = window.location.origin + window.location.pathname;
                     const fullLink = `${origin}?view=survey&token=${encodeURIComponent(s.token)}`;

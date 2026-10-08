@@ -9,7 +9,16 @@ import type {
 const API_BASE_URL =
   getRuntimeEnv('VITE_API_BASE_URL') || (import.meta.env.PROD ? '' : 'http://localhost:8080');
 
+let moduleContext = 'seleccion:postulantes';
+let moduleReadOnly = false;
+export const setSelectionModuleContext = (view: string, readOnly: boolean) => {
+  moduleContext = `seleccion:${view}`;
+  moduleReadOnly = readOnly;
+};
+
 const request = async <T>(path: string, options: RequestInit = {}): Promise<T> => {
+  const context = moduleContext;
+  if (options.method && options.method !== 'GET' && moduleReadOnly) throw new Error('Este apartado es de solo vista.');
   const token = await auth?.currentUser?.getIdToken();
   if (!token) throw new Error('Sesion no disponible.');
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -17,6 +26,7 @@ const request = async <T>(path: string, options: RequestInit = {}): Promise<T> =
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
+      'X-Module-Context': context,
       ...options.headers,
     },
   });

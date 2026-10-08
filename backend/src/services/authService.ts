@@ -22,6 +22,7 @@ interface UserProfile {
   correo?: string;
   areas?: string[];
   module_access?: string[];
+  module_view_only?: string[];
 }
 
 const genericCredentialsError = () =>
@@ -163,6 +164,7 @@ export const loginWithUsername = async (username: string, password: string) => {
       correo: profile.correo || '',
       areas: Array.isArray(profile.areas) ? profile.areas : [],
       module_access: Array.isArray(profile.module_access) ? profile.module_access : [],
+      module_view_only: Array.isArray(profile.module_view_only) ? profile.module_view_only : [],
     },
   };
 };

@@ -20,13 +20,14 @@ import {
   Save,
   Undo
 } from 'lucide-react';
-import { TrainingSession, Participant, OperationConfirmation, AltaStatus, User as AppUser } from '../types';
+import { TrainingSession, Participant, AttendanceRecord, OperationConfirmation, AltaStatus, User as AppUser } from '../types';
 import { permissions } from '../utils/permissions';
 import { isSessionAssignedTrainer } from '../utils/trainingAssignments';
 
 interface AltaConfirmationProps {
   sessions: TrainingSession[];
   participants: Participant[];
+  attendance: AttendanceRecord[];
   confirmations: OperationConfirmation[];
   currentUser: AppUser;
   coordinators?: AppUser[];
@@ -54,6 +55,7 @@ const MOTIVOS_NO_ALTA = [
 export default function AltaConfirmation({
   sessions,
   participants,
+  attendance,
   confirmations,
   currentUser,
   coordinators = [],
@@ -63,7 +65,7 @@ export default function AltaConfirmation({
 }: AltaConfirmationProps) {
   const isAdmin = currentUser.rol === 'Administrador';
   const isFormador = currentUser.rol === 'Formador';
-  const isReadOnly = !permissions[currentUser.rol]?.canConfirmHigh;
+  const isReadOnly = !permissions[currentUser.rol]?.canConfirmHigh || !!currentUser.module_view_only?.includes('formacion:altas');
 
   // Initial Filter States
   const [selectedCampaña, setSelectedCampaña] = useState<string>('todos');
@@ -138,8 +140,11 @@ export default function AltaConfirmation({
       const draft = drafts[p.id];
       const finalAltaStatus = draft?.estado_alta || p.estado_alta || (conf ? conf.estado_alta : 'Pendiente de alta');
       const hasAltaRecord = Boolean(conf || draft || p.estado_alta);
-      const completedTraining = p.resultado_formacion === 'Apto' || p.estado_final === 'Pendiente de alta' || p.estado_final === 'Alta confirmada';
-      const blockedByTraining = p.resultado_formacion === 'No apto' || p.estado_final === 'Desistió' || p.estado_final === 'No asistió';
+      const session = sessionMap[p.training_session_id];
+      const completedTraining = session?.training_model === 'split_ojt'
+        ? !!session.ojt_module_id && attendance.some((record) => record.participant_id === p.id && record.dia === 10 && ['Asistió', 'Tardanza', 'Feriado'].includes(record.estado_asistencia))
+        : p.resultado_formacion === 'Apto' || p.estado_final === 'Pendiente de alta' || p.estado_final === 'Alta confirmada';
+      const blockedByTraining = (session?.training_model === 'split_ojt' ? p.resultado_formacion_ojt === 'No apto' : p.resultado_formacion === 'No apto') || p.estado_final === 'Desistió' || p.estado_final === 'No asistió';
 
       if (!completedTraining && !hasAltaRecord) return false;
       if (blockedByTraining && !hasAltaRecord) return false;
@@ -173,7 +178,7 @@ export default function AltaConfirmation({
 
       return true;
     });
-  }, [participants, sessionMap, isFormador, currentUser.id, selectedCampaña, selectedGeneracion, selectedFormador, selectedEstadoCapacitacion, searchTerm, confirmationsMap, drafts, selectedEstadoAlta]);
+  }, [participants, attendance, sessionMap, isFormador, currentUser.id, selectedCampaña, selectedGeneracion, selectedFormador, selectedEstadoCapacitacion, searchTerm, confirmationsMap, drafts, selectedEstadoAlta]);
 
   // Handle changing status in the row
   const handleSelectStatus = (part: Participant, status: AltaStatus) => {
@@ -570,7 +575,7 @@ export default function AltaConfirmation({
                             }`}
                           >
                             <option value="Pendiente de alta">Pendiente de alta</option>
-                            <option value="Alta confirmada">Alta confirmada</option>
+                            {(isAdmin || currentAlta === 'Alta confirmada') && <option value="Alta confirmada">Alta confirmada</option>}
                             <option value="No alta">No alta (Baja)</option>
                           </select>
                         )}

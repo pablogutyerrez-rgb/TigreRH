@@ -40,6 +40,7 @@ import {
   deleteSelectionApplicant,
   deleteSelectionRequisition,
   getSelectionBootstrap,
+  setSelectionModuleContext,
   importSelectionApplicants,
   updateSelectionApplicant,
   updateSelectionRequisition,
@@ -360,6 +361,9 @@ const downloadTemplate = () => {
 
 export default function Seleccion({ currentUser, users, initialView = 'dashboard', onPlatformDataChanged }: SeleccionProps) {
   const [activeView, setActiveView] = useState<ViewMode>(initialView);
+  useEffect(() => {
+    setSelectionModuleContext(activeView, !!currentUser.module_view_only?.includes(`seleccion:${activeView}`));
+  }, [activeView, currentUser.module_view_only]);
   const [requisitions, setRequisitions] = useState<SelectionRequisition[]>([]);
   const [applicants, setApplicants] = useState<SelectionApplicant[]>([]);
   const [audit, setAudit] = useState<SelectionAuditLog[]>([]);

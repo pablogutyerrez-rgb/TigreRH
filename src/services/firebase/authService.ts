@@ -22,6 +22,7 @@ interface LoginWithUsernameResponse {
     correo?: string;
     areas?: User['areas'];
     module_access?: string[];
+    module_view_only?: string[];
   };
 }
 

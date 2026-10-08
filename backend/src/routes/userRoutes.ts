@@ -44,6 +44,7 @@ const createUserSchema = z.object({
   estado: normalizedStateSchema,
   areas: z.array(areaSchema).default([]),
   module_access: moduleAccessSchema,
+  module_view_only: moduleAccessSchema,
 });
 
 const updateUserSchema = z.object({
@@ -54,6 +55,7 @@ const updateUserSchema = z.object({
   estado: normalizedStateSchema.optional(),
   areas: z.array(areaSchema).optional(),
   module_access: z.array(z.string().trim().min(1)).optional(),
+  module_view_only: z.array(z.string().trim().min(1)).optional(),
 });
 
 const passwordSchema = z.object({
