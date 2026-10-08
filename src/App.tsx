@@ -157,10 +157,11 @@ const userHasModuleAccess = (user: User, area: UserArea, moduleId: string) => {
     area === 'formacion' &&
     moduleId === 'asistencia'
   ) return true;
+  // Los administradores conservan acceso al nuevo módulo aunque su lista histórica sea explícita.
+  if (area === 'formacion' && moduleId === 'rotacion' && user.rol === 'Administrador') return true;
   if (userHasExplicitModuleAccess(user, area, moduleId)) return true;
   if (user.module_access && user.module_access.length > 0) return false;
   if (area === 'formacion' && moduleId === 'variables') return user.rol === 'Administrador';
-  if (area === 'formacion' && moduleId === 'rotacion') return user.rol === 'Administrador';
   if (area === 'formacion' && moduleId === 'prospectos') return ['Administrador', 'Formador'].includes(user.rol);
   if (area === 'formacion' && moduleId === 'reportes' && permissions[user.rol]?.canExportReports) return true;
   if (area === 'formacion' && moduleId === 'variables' && permissions[user.rol]?.canViewTrainingVariables) return true;
