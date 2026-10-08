@@ -26,6 +26,11 @@ export interface User {
 export type TrainingVariableEvaluationStatus = 'BORRADOR' | 'CERRADO' | 'REABIERTO' | 'ANULADO';
 
 export interface TrainingVariableEvaluation {
+  formula_version?: number;
+  porcentaje_rotacion?: number;
+  meses?: number[];
+  formador_ids?: string[];
+  campanas?: string[];
   id: string;
   anio: number;
   mes: number;

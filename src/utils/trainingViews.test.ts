@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import Capacitaciones from '../components/Capacitaciones';
 import type { TrainingSession, TrainingSurvey, Participant, AttendanceRecord, OperationConfirmation, OjtModule } from '../types';
 import { overlapsDateRange, filterSurveys, type SurveyFilters } from './surveyFilters';
-import { buildTrainingWorkbook } from './trainingExport';
+import { buildTrainingWorkbook, TRAINING_EXPORT_HEADERS } from './trainingExport';
 import type { User } from '../types';
 
 test('todos los perfiles autorizados conservan descarga en Solo vista', () => {
@@ -52,7 +52,7 @@ test('los seis filtros de encuestas funcionan solos y combinados', () => {
   assert.deepEqual(filterSurveys(surveys, sessions, { ...empty, type: 'Especial', trainer: 'f4' }).map((item) => item.id), ['legacy']);
 });
 
-test('Excel preserva nombres, documento, diez dias y datos extensos, sin otros registros', () => {
+test('Excel de una hoja preserva postulantes y diez dias sin otros registros', () => {
   const people = [
     { id: 'pa', training_session_id: 'a', nombres: 'Ana', apellidos: 'Perez', dni: '00123456', observacion: 'x'.repeat(33000) },
     { id: 'pb', training_session_id: 'b', nombres: 'Luis', apellidos: 'Rios', dni: '98765432' },
@@ -67,15 +67,11 @@ test('Excel preserva nombres, documento, diez dias y datos extensos, sin otros r
   const reopened = XLSX.read(XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }), { type: 'buffer' });
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(reopened.Sheets.Postulantes);
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].Nombres, 'Ana');
-  assert.equal(rows[0].Documento, '00123456');
-  assert.equal(rows[0]['Día 10'], 'Asistió');
-  assert.equal(rows[0].Alta, 'Alta confirmada');
-  assert.equal(XLSX.utils.sheet_to_json(reopened.Sheets.Asistencia).length, 10);
-  const ojt = XLSX.utils.sheet_to_json<Record<string, string>>(reopened.Sheets.OJT)[0];
-  assert.deepEqual(JSON.parse(ojt.generation_ids), ['a']);
-  const chunks = XLSX.utils.sheet_to_json<{ Contenido: string }>(reopened.Sheets['Datos extensos']);
-  assert.equal(chunks.map((row) => row.Contenido).join('').length, 33000);
+  assert.equal(rows[0]['Nombre del postulante'], 'Ana Perez');
+  assert.deepEqual(reopened.SheetNames, ['Postulantes']);
+  assert.deepEqual(XLSX.utils.sheet_to_json(reopened.Sheets.Postulantes, { header: 1 })[0], TRAINING_EXPORT_HEADERS);
+  assert.equal(rows[0].D10, 'Asistió');
+  assert.equal(rows[0]['Desistió (Sí/No)'], 'No');
   const historic = buildTrainingWorkbook([sessions[1]], [], people, [], []);
   assert.equal(XLSX.utils.sheet_to_json(historic.Sheets.Postulantes).length, 1);
 });

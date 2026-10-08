@@ -58,6 +58,11 @@ const currentYear = new Date().getFullYear();
 const years = Array.from({ length: 7 }, (_, index) => currentYear - 3 + index);
 
 const emptyForm = (trainer?: User, currentUser?: User): FormState => ({
+  formula_version: 2,
+  porcentaje_rotacion: 0,
+  meses: [new Date().getMonth() + 1],
+  formador_ids: [],
+  campanas: [],
   anio: currentYear,
   mes: new Date().getMonth() + 1,
   id_formador: trainer?.id || '',
@@ -77,8 +82,8 @@ const emptyForm = (trainer?: User, currentUser?: User): FormState => ({
 const numberValue = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : 0;
 const percent = (value: number) => `${numberValue(value).toFixed(2)}%`;
 const money = (value: number) => `S/ ${numberValue(value).toFixed(2)}`;
-const periodLabel = (evaluation: Pick<TrainingVariableEvaluation, 'anio' | 'mes'>) =>
-  `${monthNames[evaluation.mes - 1]} ${evaluation.anio}`;
+const periodLabel = (evaluation: Pick<TrainingVariableEvaluation, 'anio' | 'mes' | 'meses'>) =>
+  `${(evaluation.meses?.length ? evaluation.meses : [evaluation.mes]).map((month) => monthNames[month - 1]).join(', ')} ${evaluation.anio}`;
 
 const statusBadge = (status: TrainingVariableEvaluation['estado']) => {
   const classes = {
@@ -133,7 +138,20 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
     [evaluations],
   );
 
-  const preview = useMemo(() => calculateTrainingVariablePreview(form), [form]);
+  const currentFormula = form.formula_version === 2;
+  const previewResult = useMemo(() => {
+    try { return { value: calculateTrainingVariablePreview(form), error: '' }; }
+    catch (error) { return { value: calculateTrainingVariablePreview({ ...form, porcentaje_rotacion: 0, porcentaje_retencion: 0, porcentaje_produccion_grupal: 0, porcentaje_satisfaccion: 0 }), error: error instanceof Error ? error.message : 'Datos inválidos' }; }
+  }, [form]);
+  const preview = previewResult.value;
+  const filteredSources = sourceOptions.filter((source) =>
+    (!form.campanas?.length || form.campanas.includes(source.campana)) &&
+    (!form.formador_ids?.length || source.formadores.some((trainer) => form.formador_ids!.includes(trainer.id))));
+  const sourceTrainers = [...new Map<string, { id: string; nombre: string }>(sourceOptions.filter((source) => !form.campanas?.length || form.campanas.includes(source.campana))
+    .flatMap((source) => source.formadores).map((trainer) => [trainer.id, trainer])).values()];
+  const updateSelection = (changes: Partial<FormState>) => setForm((previous) => ({
+    ...previous, ...changes, generation_ids: [], codigos_generacion: [], calculo_automatico: false, calculo_detalle: undefined,
+  }));
   const selectedSource = useMemo(
     () => sourceOptions.find((source) => source.id === form.generation_ids?.[0]),
     [sourceOptions, form.generation_ids],
@@ -167,7 +185,7 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
     let active = true;
     setLoadingSources(true);
     setSourceError('');
-    void listTrainingVariableSources(form.anio, form.mes)
+    void listTrainingVariableSources(form.anio, form.mes, form.meses)
       .then((response) => {
         if (active) setSourceOptions(response.sources);
       })
@@ -184,14 +202,14 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
     return () => {
       active = false;
     };
-  }, [form.anio, form.mes, modalMode]);
+  }, [form.anio, form.mes, form.meses, modalMode]);
 
   const filteredEvaluations = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
     return evaluations.filter((evaluation) => {
       if (filterYear !== 'todos' && evaluation.anio !== Number(filterYear)) return false;
-      if (filterMonth !== 'todos' && evaluation.mes !== Number(filterMonth)) return false;
-      if (filterTrainer !== 'todos' && evaluation.id_formador !== filterTrainer) return false;
+      if (filterMonth !== 'todos' && !(evaluation.meses?.length ? evaluation.meses : [evaluation.mes]).includes(Number(filterMonth))) return false;
+      if (filterTrainer !== 'todos' && !(evaluation.formador_ids?.length ? evaluation.formador_ids : [evaluation.id_formador]).includes(filterTrainer)) return false;
       if (filterCoordinator !== 'todos' && evaluation.nombre_coordinador !== filterCoordinator) return false;
       if (filterStatus !== 'todos' && evaluation.estado !== filterStatus) return false;
       if (!normalizedSearch) return true;
@@ -220,6 +238,11 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
   const openEdit = (evaluation: TrainingVariableEvaluation) => {
     setEditing(evaluation);
     setForm({
+      formula_version: evaluation.formula_version,
+      porcentaje_rotacion: evaluation.porcentaje_rotacion,
+      meses: evaluation.meses,
+      formador_ids: evaluation.formador_ids,
+      campanas: evaluation.campanas,
       anio: evaluation.anio,
       mes: evaluation.mes,
       id_formador: evaluation.id_formador,
@@ -263,6 +286,8 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
     setForm((prev) => ({
       ...prev,
       [key]: value,
+      formador_ids: [],
+      campanas: [],
       id_formador: '',
       nombre_formador: '',
       generation_ids: [],
@@ -288,11 +313,12 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
   };
 
   const handleAutomaticCalculation = async () => {
+    if (currentFormula && !form.meses?.length) { alert('Selecciona al menos un mes.'); return; }
     if (!form.id_formador) {
       alert('Selecciona un formador.');
       return;
     }
-    if (form.generation_ids?.length !== 1) {
+    if (!form.generation_ids?.length) {
       alert('Selecciona una capacitación.');
       return;
     }
@@ -304,6 +330,7 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
         form.generation_ids,
         form.anio,
         form.mes,
+        { meses: form.meses, formador_ids: form.formador_ids, campanas: form.campanas },
       );
       const calculation = response.calculation;
       setForm((prev) => ({
@@ -340,7 +367,7 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
       'Producción grupal (%)': evaluation.porcentaje_produccion_grupal,
       'Respuestas de encuesta': evaluation.calculo_detalle?.respuestas_encuesta ?? '',
       'Satisfacción (%)': evaluation.porcentaje_satisfaccion,
-      'Administrativo (%)': evaluation.porcentaje_administrativo,
+      'Administrativo / Rotación (%)': evaluation.formula_version === 2 ? evaluation.porcentaje_rotacion : evaluation.porcentaje_administrativo,
       'Cumplimiento total (%)': evaluation.cumplimiento_total,
       'Comisión total': evaluation.comision_total,
       Estado: evaluation.estado,
@@ -354,20 +381,22 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
   };
 
   const validateForm = () => {
-    if (form.generation_ids?.length !== 1) return 'Selecciona una capacitación.';
+    if (currentFormula && !form.meses?.length) return 'Selecciona al menos un mes.';
+    if (!form.generation_ids?.length) return 'Selecciona una capacitación.';
     if (!form.id_formador) return 'Selecciona un formador.';
+    if (currentFormula && previewResult.error) return previewResult.error;
     if (form.porcentaje_retencion < 0 || form.porcentaje_retencion > 100) return 'La retención debe estar entre 0% y 100%.';
     if (form.porcentaje_produccion_individual < 0 || form.porcentaje_produccion_individual > 100) return 'La producción individual debe estar entre 0% y 100%.';
     if (form.porcentaje_produccion_grupal < 0) return 'La producción grupal debe ser igual o mayor a 0%.';
     if (form.porcentaje_satisfaccion < 0 || form.porcentaje_satisfaccion > 100) return 'La satisfacción debe estar entre 0% y 100%.';
     if (form.porcentaje_administrativo < 0 || form.porcentaje_administrativo > 100) return 'El cumplimiento administrativo debe estar entre 0% y 100%.';
-    if (form.porcentaje_administrativo < 100 && !form.observacion_administrativa?.trim()) {
+    if (!currentFormula && form.porcentaje_administrativo < 100 && !form.observacion_administrativa?.trim()) {
       return 'El sustento administrativo es obligatorio cuando la calificación es menor a 100%.';
     }
     const duplicate = evaluations.some((evaluation) =>
       evaluation.id !== editing?.id &&
-      evaluation.id_formador === form.id_formador &&
-      evaluation.generation_ids?.includes(form.generation_ids[0]) &&
+      (evaluation.formador_ids || [evaluation.id_formador]).some((id) => (form.formador_ids || [form.id_formador]).includes(id)) &&
+      evaluation.generation_ids?.some((id) => form.generation_ids!.includes(id)) &&
       evaluation.estado !== 'ANULADO',
     );
     if (duplicate) return 'Ya existe una evaluación activa para ese formador y capacitación.';
@@ -546,7 +575,7 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                   <td className="px-4 py-3">{percent(evaluation.porcentaje_produccion_individual)}</td>
                   <td className="px-4 py-3">{percent(evaluation.porcentaje_produccion_grupal)}</td>
                   <td className="px-4 py-3">{percent(evaluation.porcentaje_satisfaccion)}</td>
-                  <td className="px-4 py-3">{percent(evaluation.porcentaje_administrativo)}</td>
+                  <td className="px-4 py-3">{percent(evaluation.formula_version === 2 ? evaluation.porcentaje_rotacion ?? 0 : evaluation.porcentaje_administrativo)}</td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-black ${scoreBadge(evaluation.cumplimiento_total)}`}>
                       {percent(evaluation.cumplimiento_total)}
@@ -614,9 +643,10 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                     </label>
                     <label className="space-y-1">
                       <span className={labelClass}>Mes</span>
-                      <select disabled={isReadOnly} value={form.mes} onChange={(event) => updatePeriod('mes', Number(event.target.value))} className={inputClass}>
+                      {currentFormula ? <VariableMultiSelect disabled={isReadOnly} options={monthNames.map((label, index) => ({ id: String(index + 1), label }))} selected={(form.meses || []).map(String)} onChange={(ids) => updateSelection({ meses: ids.map(Number), mes: Number(ids[0]) || form.mes })} className={inputClass} /> : (<select disabled={isReadOnly} value={form.mes} onChange={(event) => updatePeriod('mes', Number(event.target.value))} className={inputClass}>
                         {monthNames.map((month, index) => <option key={month} value={index + 1}>{month}</option>)}
-                      </select>
+                      </select>)}
+
                     </label>
                     <label className="md:col-span-2 space-y-1">
                       <span className={labelClass}>Observación general</span>
@@ -629,13 +659,13 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                     <div>
                       <h4 className="font-black text-slate-900">Capacitación y formador</h4>
-                      <p className="mt-1 text-xs text-slate-500">Selecciona una capacitación y luego el formador asociado al que se asignará el cálculo.</p>
+                      <p className="mt-1 text-xs text-slate-500">Selecciona las capacitaciones y los formadores asociados.</p>
                     </div>
                     {!isReadOnly && (
                       <button
                         type="button"
                         onClick={() => void handleAutomaticCalculation()}
-                        disabled={calculating || form.generation_ids?.length !== 1 || !form.id_formador}
+                        disabled={calculating || !form.generation_ids?.length || !form.id_formador || currentFormula && !form.meses?.length}
                         className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black text-white disabled:opacity-40"
                       >
                         <Sparkles className="h-4 w-4" />
@@ -645,9 +675,10 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                   </div>
 
                   <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                    {currentFormula && <label className="space-y-1"><span className={labelClass}>Campaña</span><VariableMultiSelect disabled={isReadOnly} options={[...new Set<string>(sourceOptions.map((source) => source.campana))].map((name) => ({ id: name, label: name }))} selected={form.campanas || []} className={inputClass} onChange={(ids) => updateSelection({ campanas: ids, formador_ids: [], id_formador: '', nombre_formador: '' })} /></label>}
                     <label className="space-y-1">
                       <span className={labelClass}>Capacitación</span>
-                      <select
+                      {currentFormula ? <VariableMultiSelect disabled={isReadOnly || loadingSources} options={filteredSources.map((source) => ({ id: source.id, label: source.codigo + ' · ' + source.campana }))} selected={form.generation_ids || []} className={inputClass} onChange={(ids) => setForm((previous) => ({ ...previous, generation_ids: ids, codigos_generacion: filteredSources.filter((source) => ids.includes(source.id)).map((source) => source.codigo), calculo_automatico: false, calculo_detalle: undefined }))} /> : (<select
                         disabled={isReadOnly || loadingSources}
                         value={form.generation_ids?.[0] || ''}
                         onChange={(event) => selectSource(event.target.value)}
@@ -657,11 +688,11 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                         {sourceOptions.map((source) => (
                           <option key={source.id} value={source.id}>{source.codigo} · {source.campana}</option>
                         ))}
-                      </select>
+                      </select>)}
                     </label>
                     <label className="space-y-1">
                       <span className={labelClass}>Formador asociado</span>
-                      <select
+                      {currentFormula ? <VariableMultiSelect disabled={isReadOnly} options={sourceTrainers.map((trainer) => ({ id: trainer.id, label: trainer.nombre }))} selected={form.formador_ids || []} className={inputClass} onChange={(ids) => updateSelection({ formador_ids: ids, id_formador: ids[0] || '', nombre_formador: sourceTrainers.filter((trainer) => ids.includes(trainer.id)).map((trainer) => trainer.nombre).join(', ') })} /> : (<select
                         disabled={isReadOnly || !selectedSource}
                         value={form.id_formador}
                         onChange={(event) => updateTrainer(event.target.value)}
@@ -671,7 +702,7 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                         {associatedTrainers.map((trainer) => (
                           <option key={trainer.id} value={trainer.id}>{trainer.nombre}</option>
                         ))}
-                      </select>
+                      </select>)}
                     </label>
                   </div>
 
@@ -704,12 +735,12 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
 
                 <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <KpiCard
-                    title="Retención a operación"
+                    title={currentFormula ? "Retención total (D1–D10)" : "Retención a operación"}
                     weight="Peso 30%"
-                    meta="Meta 70%"
+                    meta={currentFormula ? "Meta 50%" : "Meta 70%"}
                     guide={{
                       measures: 'Mide la capacidad del formador para lograr que los participantes culminen la capacitación y pasen a operación.',
-                      input: 'Ingresa el porcentaje mensual de retención obtenido. La meta de referencia es 70%; si el valor supera 70%, genera sobrecumplimiento.',
+                      input: currentFormula ? '100% menos el promedio de deserción del Dashboard. Meta 50%.' : 'Ingresa el porcentaje mensual de retención obtenido. La meta de referencia es 70%; si el valor supera 70%, genera sobrecumplimiento.',
                     }}
                   >
                     <PercentInput label="Retención obtenida" value={form.porcentaje_retencion} disabled={isReadOnly} onChange={(value) => updateForm('porcentaje_retencion', value)} />
@@ -717,16 +748,16 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                     <ReadMetric label="Aporte" value={`${preview.aporte_retencion.toFixed(2)} puntos`} />
                   </KpiCard>
                   <KpiCard
-                    title="Producción durante OJT"
+                    title={currentFormula ? "Productividad OJT" : "Producción durante OJT"}
                     weight="Peso 50%"
                     meta="Meta grupal 100%"
                     guide={{
                       measures: 'Mide el desempeño productivo durante OJT según el resultado mensual definido por el coordinador.',
-                      input: 'Ingresa dos porcentajes: el individual solo sirve como referencia; el grupal se compara con la meta de 100% y calcula el aporte ponderado del KPI.',
+                      input: currentFormula ? 'Promedio de productividad de las capacitaciones seleccionadas. Meta 100%.' : 'Ingresa dos porcentajes: el individual solo sirve como referencia; el grupal se compara con la meta de 100% y calcula el aporte ponderado del KPI.',
                     }}
                   >
-                    <PercentInput label="Cumplimiento individual" value={form.porcentaje_produccion_individual} disabled={isReadOnly} onChange={(value) => updateForm('porcentaje_produccion_individual', value)} />
-                    <PercentInput label="Cumplimiento grupal" value={form.porcentaje_produccion_grupal} disabled={isReadOnly} onChange={(value) => updateForm('porcentaje_produccion_grupal', value)} />
+                    {!currentFormula && <PercentInput label="Cumplimiento individual" value={form.porcentaje_produccion_individual} disabled={isReadOnly} onChange={(value) => updateForm('porcentaje_produccion_individual', value)} />}
+                    <PercentInput label={currentFormula ? "Productividad OJT" : "Cumplimiento grupal"} value={form.porcentaje_produccion_grupal} disabled={isReadOnly} onChange={(value) => updateForm('porcentaje_produccion_grupal', value)} />
                     <ReadMetric label="Aporte grupal" value={`${preview.aporte_produccion.toFixed(2)} puntos`} />
                   </KpiCard>
                   <KpiCard
@@ -735,7 +766,7 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                     meta="Meta 90%"
                     guide={{
                       measures: 'Mide la percepción de calidad de la capacitación recibida por los participantes.',
-                      input: 'Ingresa el porcentaje promedio mensual de satisfacción. La meta mínima es 90%; valores superiores representan sobrecumplimiento.',
+                      input: currentFormula ? 'Promedio de las encuestas correspondientes. Meta 90%.' : 'Ingresa el porcentaje promedio mensual de satisfacción. La meta mínima es 90%; valores superiores representan sobrecumplimiento.',
                     }}
                   >
                     <PercentInput label="Satisfacción obtenida" value={form.porcentaje_satisfaccion} disabled={isReadOnly} onChange={(value) => updateForm('porcentaje_satisfaccion', value)} />
@@ -743,17 +774,17 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                     <ReadMetric label="Aporte" value={`${preview.aporte_satisfaccion.toFixed(2)} puntos`} />
                   </KpiCard>
                   <KpiCard
-                    title="Cumplimiento administrativo"
+                    title={currentFormula ? "Rotación" : "Cumplimiento administrativo"}
                     weight="Peso 10%"
-                    meta="Calificación manual"
+                    meta={currentFormula ? "Meta 10% · Ingreso manual" : "Calificación manual"}
                     guide={{
-                      measures: 'Mide el cumplimiento de responsabilidades operativas y administrativas del formador durante el mes.',
-                      input: 'Ingresa una calificación manual de 0% a 100%. Si es menor a 100%, debes registrar el sustento u observación.',
+                      measures: currentFormula ? 'Rotación calculada externamente.' : 'Mide el cumplimiento de responsabilidades operativas y administrativas del formador durante el mes.',
+                      input: currentFormula ? '10% obtiene 10 puntos; por debajo disminuye proporcionalmente. Por encima requiere definición.' : 'Ingresa una calificación manual de 0% a 100%. Si es menor a 100%, debes registrar el sustento u observación.',
                     }}
                   >
-                    <PercentInput label="Cumplimiento administrativo" value={form.porcentaje_administrativo} disabled={isReadOnly} onChange={(value) => updateForm('porcentaje_administrativo', value)} />
+                    <PercentInput label={currentFormula ? "Rotación" : "Cumplimiento administrativo"} value={currentFormula ? form.porcentaje_rotacion ?? 0 : form.porcentaje_administrativo} disabled={isReadOnly} onChange={(value) => updateForm(currentFormula ? 'porcentaje_rotacion' : 'porcentaje_administrativo', value)} />
                     <label className="space-y-1 block">
-                      <span className={labelClass}>Sustento {form.porcentaje_administrativo < 100 ? '*' : ''}</span>
+                      <span className={labelClass}>Sustento {!currentFormula && form.porcentaje_administrativo < 100 ? '*' : ''}</span>
                       <textarea disabled={isReadOnly} value={form.observacion_administrativa || ''} onChange={(event) => updateForm('observacion_administrativa', event.target.value)} rows={3} className={inputClass} />
                     </label>
                     <ReadMetric label="Aporte" value={`${preview.aporte_administrativo.toFixed(2)} puntos`} />
@@ -762,21 +793,22 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
               </div>
 
               <aside className="space-y-4">
+                {previewResult.error && <p role="alert" className="text-sm text-rose-700">{previewResult.error}</p>}
                 <section className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
                   <h4 className="text-lg font-black text-slate-950 mb-4">Resumen de comisión</h4>
                   <div className="space-y-3">
                     <ReadMetric label="Aporte retención" value={`${preview.aporte_retencion.toFixed(2)} pts`} />
                     <ReadMetric label="Aporte producción" value={`${preview.aporte_produccion.toFixed(2)} pts`} />
                     <ReadMetric label="Aporte satisfacción" value={`${preview.aporte_satisfaccion.toFixed(2)} pts`} />
-                    <ReadMetric label="Aporte administrativo" value={`${preview.aporte_administrativo.toFixed(2)} pts`} />
+                    <ReadMetric label={currentFormula ? "Aporte rotación" : "Aporte administrativo"} value={`${preview.aporte_administrativo.toFixed(2)} pts`} />
                   </div>
                   <div className={`mt-5 rounded-2xl border p-4 ${scoreBadge(preview.cumplimiento_total)}`}>
                     <p className="text-xs font-black uppercase tracking-wide">Cumplimiento total</p>
                     <p className="text-3xl font-black mt-1">{percent(preview.cumplimiento_total)}</p>
                   </div>
-                  {preview.cumplimiento_total < 85 && (
+                  {preview.cumplimiento_total < (currentFormula ? 90 : 85) && (
                     <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700">
-                      El cumplimiento global es menor a 85%. La comisión aplicable es S/ 0.00.
+                      El cumplimiento global es menor a {currentFormula ? 90 : 85}%. La comisión aplicable es S/ 0.00.
                     </div>
                   )}
                   <div className="mt-4 space-y-2 text-sm">
@@ -796,7 +828,7 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                     <p>Esta vista es solo lectura o la evaluación no permite edición por su estado actual.</p>
                   </div>
                 )}
-                {!isReadOnly && form.porcentaje_administrativo < 100 && !form.observacion_administrativa?.trim() && (
+                {!isReadOnly && !currentFormula && form.porcentaje_administrativo < 100 && !form.observacion_administrativa?.trim() && (
                   <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
                     <AlertTriangle className="w-5 h-5 mt-0.5" />
                     <p>Agrega un sustento administrativo para poder guardar.</p>
@@ -810,7 +842,7 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
               {!isReadOnly && (
                 <button
                   onClick={handleSave}
-                  disabled={saving}
+                  disabled={saving || Boolean(previewResult.error)}
                   className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white disabled:opacity-50"
                 >
                   <Save className="w-4 h-4" />
@@ -911,4 +943,19 @@ function ReadMetric({ label, value }: { label: string; value: string }) {
       <span className="font-black text-slate-900">{value}</span>
     </div>
   );
+}
+
+function VariableMultiSelect({ options, selected, onChange, disabled, className }: {
+  options: { id: string; label: string }[]; selected: string[]; onChange: (ids: string[]) => void; disabled: boolean; className: string;
+}) {
+  if (disabled) return <div className={className}>{options.filter((option) => selected.includes(option.id)).map((option) => option.label).join(', ') || 'Sin selección'}</div>;
+  return <details className="relative">
+    <summary className={className}>{selected.length ? `${selected.length} seleccionados` : 'Seleccionar'}</summary>
+    <div className="absolute left-0 z-50 mt-1 max-h-60 min-w-full overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+      {options.map((option) => <label key={option.id} className="flex items-center gap-2 px-2 py-2 text-xs text-slate-700">
+        <input type="checkbox" checked={selected.includes(option.id)} onChange={() => onChange(selected.includes(option.id) ? selected.filter((id) => id !== option.id) : [...selected, option.id])} />
+        {option.label}
+      </label>)}
+    </div>
+  </details>;
 }

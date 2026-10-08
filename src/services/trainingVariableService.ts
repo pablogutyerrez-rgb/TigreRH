@@ -4,6 +4,11 @@ import type { TrainingVariableEvaluation } from '../types';
 
 export type TrainingVariablePayload = Pick<
   TrainingVariableEvaluation,
+  | 'formula_version'
+  | 'porcentaje_rotacion'
+  | 'meses'
+  | 'formador_ids'
+  | 'campanas'
   | 'anio'
   | 'mes'
   | 'id_formador'
@@ -62,8 +67,9 @@ const request = async <T>(path: string, options: RequestInit = {}) => {
 export const listTrainingVariableEvaluations = () =>
   request<{ evaluations: TrainingVariableEvaluation[] }>('/api/formacion/variables');
 
-export const listTrainingVariableSources = (anio: number, mes: number) => {
+export const listTrainingVariableSources = (anio: number, mes: number, meses?: number[]) => {
   const query = new URLSearchParams({ anio: String(anio), mes: String(mes) });
+  if (meses?.length) query.set('meses', meses.join(','));
   return request<{ sources: TrainingVariableSource[] }>(`/api/formacion/variables/fuentes/codigos?${query}`);
 };
 
@@ -72,9 +78,10 @@ export const calculateTrainingVariableAutomatically = (
   generationIds: string[],
   anio: number,
   mes: number,
+  filters?: { meses?: number[]; formador_ids?: string[]; campanas?: string[] },
 ) => request<{ calculation: AutomaticTrainingVariableCalculation }>('/api/formacion/variables/calcular/automatico', {
   method: 'POST',
-  body: JSON.stringify({ formador_id: formadorId, generation_ids: generationIds, anio, mes }),
+  body: JSON.stringify({ formador_id: formadorId, generation_ids: generationIds, anio, mes, ...filters }),
 });
 
 export const createTrainingVariableEvaluation = (payload: TrainingVariablePayload) =>

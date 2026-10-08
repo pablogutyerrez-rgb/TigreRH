@@ -1,3 +1,4 @@
+import { calculatePhaseMetrics } from './trainingPhaseMetrics.js';
 import { dataDb as adminDb } from '../hybridDb.js';
 
 type StoredRecord = Record<string, unknown> & { id: string };
@@ -27,8 +28,6 @@ export interface AutomaticTrainingVariableResult {
   };
 }
 
-const ACTIVE_ATTENDANCE = new Set(['asistio', 'tardanza', 'descanso medico', 'feriado']);
-const INITIAL_TRAINING_FINAL_DAY = 5;
 const roundPercent = (value: number) => Math.round(value * 100) / 100;
 const normalizeText = (value: unknown) => String(value || '').trim();
 const normalizeKey = (value: unknown) => normalizeText(value)
@@ -84,29 +83,23 @@ export const listTrainingVariableSources = async (
   year: number,
   month: number,
   trainerId?: string,
+  months?: number[],
 ) => {
   const [sessions, users] = await Promise.all([readCollection('sessions'), readCollection('users')]);
   const trainerNames = new Map(users.map((user) => [user.id, normalizeText(user.nombre)]));
   return sessions
-    .filter((session) => isInPeriod(session, year, month))
+    .filter((session) => (months?.length ? months : [month]).some((m) => isInPeriod(session, year, m)))
     .filter((session) => !trainerId || isAssignedTrainer(session, trainerId))
     .map((session) => sourceFromSession(session, trainerNames))
     .filter((source) => source.formadores.length > 0)
     .sort((a, b) => a.fecha_inicio.localeCompare(b.fecha_inicio) || a.codigo.localeCompare(b.codigo));
 };
 
-const attendanceStatus = (
-  participant: StoredRecord,
-  recordsByParticipantAndDay: Map<string, string>,
-  day: number,
-) => recordsByParticipantAndDay.get(`${participant.id}:${day}`)
-  || normalizeText(participant[`asistencia_dia_${day}`]);
-
 const responseScorePercent = (response: StoredRecord) => {
-  const finalScore = Number(response.final_score_20);
+  const finalScore = response.final_score_20 == null || response.final_score_20 === '' ? NaN : Number(response.final_score_20);
   if (Number.isFinite(finalScore)) return Math.max(0, Math.min(100, finalScore * 5));
 
-  const average = Number(response.promedio_individual);
+  const average = response.promedio_individual == null || response.promedio_individual === '' ? NaN : Number(response.promedio_individual);
   if (Number.isFinite(average)) return Math.max(0, Math.min(100, average * 20));
 
   const questionValues = Array.from({ length: 10 }, (_, index) => Number(response[`q${index + 1}`]))
@@ -120,9 +113,10 @@ export const calculateTrainingVariableFromSources = async (
   generationIds: string[],
   year: number,
   month: number,
+  filters?: { meses?: number[]; formador_ids?: string[]; campanas?: string[] },
 ): Promise<AutomaticTrainingVariableResult> => {
   const selectedIds = Array.from(new Set(generationIds.map(normalizeText).filter(Boolean)));
-  if (selectedIds.length !== 1) throw new Error('Selecciona una capacitación para calcular la variable.');
+  if (!selectedIds.length) throw new Error('Selecciona una capacitación para calcular la variable.');
 
   const [sessions, participants, attendance, prospects, surveys, responses] = await Promise.all([
     readCollection('sessions'),
@@ -133,15 +127,27 @@ export const calculateTrainingVariableFromSources = async (
     readCollection('responses'),
   ]);
 
+  return calculateTrainingVariableFromData(trainerId, selectedIds, year, month, { sessions, participants, attendance, prospects, surveys, responses }, filters);
+};
+
+export const calculateTrainingVariableFromData = (
+  trainerId: string, generationIds: string[], year: number, month: number,
+  data: { sessions: StoredRecord[]; participants: StoredRecord[]; attendance: StoredRecord[]; prospects: StoredRecord[]; surveys: StoredRecord[]; responses: StoredRecord[] },
+  filters?: { meses?: number[]; formador_ids?: string[]; campanas?: string[] },
+): AutomaticTrainingVariableResult => {
+  const selectedIds = [...new Set(generationIds)];
+  if (!selectedIds.length) throw new Error('Selecciona al menos una capacitación.');
+  const { sessions, participants, attendance, prospects, surveys, responses } = data;
   const sessionById = new Map(sessions.map((session) => [session.id, session]));
   const selectedSessions = selectedIds.map((id) => sessionById.get(id));
   if (selectedSessions.some((session) => !session)) throw new Error('Uno de los códigos seleccionados ya no existe.');
 
   const validSessions = selectedSessions as StoredRecord[];
-  if (validSessions.some((session) => !isAssignedTrainer(session, trainerId))) {
+  if (filters?.formador_ids?.some((id) => !validSessions.some((session) => isAssignedTrainer(session, id)))) throw new Error('Un formador no tiene capacitaciones seleccionadas.');
+  if (validSessions.some((session) => !(filters?.formador_ids?.length ? filters.formador_ids : [trainerId]).some((id) => isAssignedTrainer(session, id)))) {
     throw new Error('Uno de los códigos seleccionados no corresponde al formador.');
   }
-  if (validSessions.some((session) => !isInPeriod(session, year, month))) {
+  if (validSessions.some((session) => !(filters?.meses?.length ? filters.meses : [month]).some((m) => isInPeriod(session, year, m)))) {
     throw new Error('Uno de los códigos seleccionados no corresponde al periodo indicado.');
   }
 
@@ -149,61 +155,48 @@ export const calculateTrainingVariableFromSources = async (
   const selectedCodes = validSessions.map((session) => sourceFromSession(session).codigo);
   const selectedParticipants = participants.filter((participant) => selectedIdSet.has(normalizeText(participant.training_session_id)));
   const selectedAttendance = attendance.filter((record) => selectedIdSet.has(normalizeText(record.training_session_id)));
-  const recordsByParticipantAndDay = new Map<string, string>();
-  selectedAttendance.forEach((record) => {
-    recordsByParticipantAndDay.set(`${normalizeText(record.participant_id)}:${Number(record.dia)}`, normalizeText(record.estado_asistencia));
-  });
 
-  let dayOneCount = 0;
-  let finalDayCount = 0;
-  selectedParticipants.forEach((participant) => {
-    const attendedDayOne = ACTIVE_ATTENDANCE.has(normalizeKey(attendanceStatus(participant, recordsByParticipantAndDay, 1)));
-    if (!attendedDayOne) return;
-
-    dayOneCount += 1;
-    if (ACTIVE_ATTENDANCE.has(normalizeKey(attendanceStatus(
-      participant,
-      recordsByParticipantAndDay,
-      INITIAL_TRAINING_FINAL_DAY,
-    )))) {
-      finalDayCount += 1;
-    }
-  });
-  const retention = dayOneCount > 0 ? (finalDayCount / dayOneCount) * 100 : 0;
-
-  const selectedSession = validSessions[0];
-  const selectedCampaign = normalizeCampaignKey(selectedSession.campana || selectedSession['campaña']);
-  const selectedTrainerIds = new Set(assignedTrainerIds(selectedSession));
-  const selectedStartDate = normalizeText(selectedSession.fecha_inicio);
-  const selectedEndDate = normalizeText(selectedSession.fecha_fin);
-  const selectedProspects = prospects.filter((prospect) => {
-    const sessionId = normalizeText(prospect.training_session_id);
-    const sessionCode = normalizeText(prospect.training_session_code);
-    if (selectedIdSet.has(sessionId) || selectedCodes.includes(sessionCode)) return true;
-
-    const prospectDate = normalizeText(prospect.fecha_registro);
-    const sameCampaign = normalizeCampaignKey(prospect.campana || prospect['campaña']) === selectedCampaign;
-    const sameTrainer = selectedTrainerIds.has(normalizeText(prospect.formador_id));
-    const insideTrainingDates = Boolean(
-      prospectDate && selectedStartDate && selectedEndDate &&
-      prospectDate >= selectedStartDate && prospectDate <= selectedEndDate,
-    );
-    return !sessionId && !sessionCode && sameCampaign && sameTrainer && insideTrainingDates;
-  });
-  const soldProspects = selectedProspects.filter((prospect) =>
-    ['venta', 'alta', 'ventaalta'].includes(normalizeStatusKey(prospect.estado)),
-  );
-  const production = selectedProspects.length > 0 ? (soldProspects.length / selectedProspects.length) * 100 : 0;
+  if (filters?.campanas?.length && validSessions.some((session) =>
+    !filters.campanas!.includes(normalizeText(session.campana || session['campaña'])))) {
+    throw new Error('Una capacitación no corresponde a las campañas seleccionadas.');
+  }
+  const phases = validSessions.map((session) => calculatePhaseMetrics(
+    new Set(selectedParticipants.filter((p) => p.training_session_id === session.id).map((p) => p.id)),
+    selectedAttendance.filter((a) => a.training_session_id === session.id).map((a) => ({
+      participant_id: normalizeText(a.participant_id), dia: Number(a.dia), estado_asistencia: normalizeText(a.estado_asistencia),
+    })), [],
+  ));
+  const dayOneCount = phases.reduce((sum, phase) => sum + phase.d1Ids.size, 0);
+  const finalDayCount = phases.reduce((sum, phase) => sum + phase.d10Ids.size, 0);
+  const retention = 100 - phases.reduce((sum, phase) => sum + phase.desercionFinalRate, 0) / phases.length;
+  const sessionProspects = new Map(validSessions.map((session) => [session.id, [] as StoredRecord[]]));
+  for (const prospect of prospects) {
+    const sessionId = normalizeText(prospect.training_session_id), code = normalizeText(prospect.training_session_code);
+    const matches = validSessions.filter((session) => {
+      if (sessionId) return session.id === sessionId;
+      if (code) return sourceFromSession(session).codigo === code;
+      return normalizeCampaignKey(prospect.campana || prospect['campaña']) === normalizeCampaignKey(session.campana || session['campaña'])
+        && assignedTrainerIds(session).includes(normalizeText(prospect.formador_id))
+        && normalizeText(prospect.fecha_registro).slice(0, 10) >= normalizeText(session.fecha_inicio).slice(0, 10)
+        && normalizeText(prospect.fecha_registro).slice(0, 10) <= normalizeText(session.fecha_fin).slice(0, 10);
+    });
+    if (matches.length === 1) sessionProspects.get(matches[0].id)!.push(prospect);
+  }
+  const isSale = (p: StoredRecord) => ['venta', 'alta', 'ventaalta'].includes(normalizeStatusKey(p.estado));
+  const selectedProspects = [...sessionProspects.values()].flat();
+  const soldProspects = selectedProspects.filter(isSale);
+  const production = [...sessionProspects.values()].reduce((sum, records) =>
+    sum + (records.length ? records.filter(isSale).length / records.length * 100 : 0), 0) / validSessions.length;
 
   const selectedSurveyIds = new Set(
     surveys
-      .filter((survey) => selectedIdSet.has(normalizeText(survey.training_session_id)) || selectedCodes.includes(normalizeText(survey.codigo_generacion)))
+      .filter((survey) => survey.training_session_id ? selectedIdSet.has(normalizeText(survey.training_session_id)) : selectedCodes.includes(normalizeText(survey.codigo_generacion)))
       .map((survey) => survey.id),
   );
-  const selectedResponses = responses.filter((response) =>
-    selectedSurveyIds.has(normalizeText(response.training_survey_id))
-    || selectedCodes.includes(normalizeText(response.codigo_generacion)),
-  );
+  const selectedResponses = [...new Map(responses.filter((response) =>
+    response.training_survey_id ? selectedSurveyIds.has(normalizeText(response.training_survey_id))
+    : selectedCodes.includes(normalizeText(response.codigo_generacion)),
+  ).map((response) => [response.id, response])).values()];
   const satisfactionScores = selectedResponses
     .map(responseScorePercent)
     .filter((value): value is number => value !== null);

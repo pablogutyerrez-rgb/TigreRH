@@ -26,7 +26,8 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import type { Prospect, ProspectStatus, TrainingSession, User } from '../types';
+import { campaignKey, prospectComparison, filterProspectRecords } from '../utils/prospectMetrics';
+import type { Participant, AttendanceRecord, Prospect, ProspectStatus, TrainingSession, User } from '../types';
 import { BPO_CAMPAIGNS, normalizeCampaignName } from '../constants/campaigns';
 import {
   createProspect,
@@ -41,6 +42,8 @@ interface ProspectosProps {
   currentUser: User;
   users: User[];
   sessions: TrainingSession[];
+  participants: Participant[];
+  attendance: AttendanceRecord[];
 }
 
 const PROSPECT_STATUSES: ProspectStatus[] = [
@@ -121,10 +124,10 @@ const resolveProspectSession = (prospect: Prospect, sessions: TrainingSession[])
   );
   if (explicit) return explicit;
 
-  const campaignKey = normalizedKey(prospect.campana);
+  const prospectCampaignKey = campaignKey(prospect.campana);
   const trainerKey = normalizedKey(prospect.formador_nombre || '');
   const candidates = sessions.filter((session) => {
-    const sameCampaign = normalizedKey(session.campaña) === campaignKey;
+    const sameCampaign = campaignKey(session.campaña) === prospectCampaignKey;
     const sameTrainer = session.formador_id === prospect.formador_id ||
       (!!trainerKey && normalizedKey(session.formador_nombre || '') === trainerKey);
     return sameCampaign && sameTrainer;
@@ -142,9 +145,9 @@ const resolveProspectSession = (prospect: Prospect, sessions: TrainingSession[])
     .sort((a, b) => a.distance - b.distance)[0]?.session;
 };
 
-export default function Prospectos({ currentUser, users, sessions }: ProspectosProps) {
+export default function Prospectos({ currentUser, users, sessions, participants, attendance }: ProspectosProps) {
   const isAdmin = currentUser.rol === 'Administrador';
-  const canExport = ['Administrador', 'Coordinador', 'Analista'].includes(currentUser.rol);
+  const canExport = ['Administrador', 'Coordinador', 'Analista'].includes(currentUser.rol) || Boolean(currentUser.module_view_only?.includes('formacion:prospectos'));
   const trainers = useMemo(
     () => users.filter((user) => user.rol === 'Formador' && user.estado === 'Activo'),
     [users],
@@ -213,7 +216,7 @@ export default function Prospectos({ currentUser, users, sessions }: ProspectosP
   }, [prospects, trainers]);
   const sessionOptions = useMemo(() => sessions
     .filter((session) => {
-      if (campaignFilters.length > 0 && !campaignFilters.some((campaign) => normalizedKey(session.campaña) === normalizedKey(campaign))) return false;
+      if (campaignFilters.length > 0 && !campaignFilters.some((campaign) => campaignKey(session.campaña) === campaignKey(campaign))) return false;
       if (trainerFilter !== 'todos' && !isSessionAssignedTrainer(session, trainerFilter)) return false;
       return true;
     })
@@ -221,42 +224,24 @@ export default function Prospectos({ currentUser, users, sessions }: ProspectosP
 
   const sessionCodeOptions = useMemo(() => {
     const prospectCodes = prospects
-      .filter((prospect) => campaignFilters.length === 0 || campaignFilters.some((campaign) => normalizedKey(prospect.campana) === normalizedKey(campaign)))
+      .filter((prospect) => campaignFilters.length === 0 || campaignFilters.some((campaign) => campaignKey(prospect.campana) === campaignKey(campaign)))
       .filter((prospect) => trainerFilter === 'todos' || prospect.formador_id === trainerFilter)
       .map((prospect) => prospect.training_session_code)
       .filter((code): code is string => Boolean(code));
     return Array.from(new Set([...sessionOptions.map(getSessionCode), ...prospectCodes])).sort();
   }, [sessionOptions, prospects, campaignFilters, trainerFilter]);
 
-  const filteredProspects = useMemo(() => {
-    const term = search.trim().toLocaleLowerCase('es');
-    return prospects.filter((prospect) => {
-      if (campaignFilters.length > 0 && !campaignFilters.some((campaign) => normalizedKey(prospect.campana) === normalizedKey(campaign))) return false;
-      if (trainerFilter !== 'todos' && prospect.formador_id !== trainerFilter) return false;
-      if (startDateFilter && prospect.fecha_registro < startDateFilter) return false;
-      if (endDateFilter && prospect.fecha_registro > endDateFilter) return false;
-      if (sessionFilter !== 'todas') {
-        const resolvedSession = resolveProspectSession(prospect, sessions);
-        const resolvedCode = prospect.training_session_code || (resolvedSession ? getSessionCode(resolvedSession) : '');
-        if (resolvedCode !== sessionFilter) return false;
-      }
-      if (!term) return true;
-      return [
-        prospect.ejecutivo_nombre,
-        prospect.ejecutivo_dni,
-        prospect.ejecutivo_inconcert,
-        prospect.prospecto_nombre,
-        prospect.ruc,
-        prospect.dni,
-        prospect.telefono,
-      ].some((value) => String(value || '').toLocaleLowerCase('es').includes(term));
-    });
-  }, [prospects, search, campaignFilters, trainerFilter, startDateFilter, endDateFilter, sessionFilter, sessions]);
+  const filteredProspects = useMemo(() => filterProspectRecords(prospects, {
+    campaigns: campaignFilters, trainer: trainerFilter, from: startDateFilter, to: endDateFilter,
+    generation: sessionFilter, search,
+  }, (prospect) => {
+    const session = resolveProspectSession(prospect, sessions);
+    return prospect.training_session_code || (session ? getSessionCode(session) : '');
+  }), [prospects, campaignFilters, trainerFilter, startDateFilter, endDateFilter, sessionFilter, search, sessions]);
 
   const lastFiveDays = useMemo(
     () => Array.from(new Set(filteredProspects.map((prospect) => prospect.fecha_registro).filter(Boolean)))
-      .sort()
-      .slice(-5),
+      .sort(),
     [filteredProspects],
   );
 
@@ -266,15 +251,12 @@ export default function Prospectos({ currentUser, users, sessions }: ProspectosP
   );
   const sales = ojtProspects.filter((prospect) => isSaleStatus(prospect.estado)).length;
   const conversion = ojtProspects.length > 0 ? Math.round((sales / ojtProspects.length) * 100) : 0;
-  const dailyData = lastFiveDays.map((date, index) => {
-    const dayProspects = ojtProspects.filter((prospect) => prospect.fecha_registro === date);
-    return {
-      name: `Día ${index + 1}`,
-      fecha: formatDate(date),
-      Prospectos: dayProspects.length,
-      Ventas: dayProspects.filter((prospect) => isSaleStatus(prospect.estado)).length,
-    };
-  });
+  const dailyData = useMemo(() => prospectComparison(
+    filteredProspects,
+    sessionOptions.filter((session) => sessionFilter === 'todas' || getSessionCode(session) === sessionFilter),
+    participants.filter((person) => !search.trim() || [person.nombres, person.apellidos, person.dni].some((value) => value?.toLocaleLowerCase('es').includes(search.trim().toLocaleLowerCase('es')))),
+    attendance, startDateFilter, endDateFilter,
+  ), [filteredProspects, sessionOptions, sessionFilter, participants, attendance, startDateFilter, endDateFilter, search]);
   const { executiveData, campaignData } = useMemo(() => {
     const executives = new Map<string, { ejecutivo: string; campana: string; prospectos: number; ventas: number }>();
     const campaigns = new Map<string, { prospects: number; sales: number }>();
@@ -292,20 +274,20 @@ export default function Prospectos({ currentUser, users, sessions }: ProspectosP
       if (isSale) executive.ventas += 1;
       executives.set(executiveKey, executive);
 
-      const campaign = campaigns.get(prospect.campana) || { prospects: 0, sales: 0 };
+      const campaign = campaigns.get(campaignKey(prospect.campana)) || { prospects: 0, sales: 0 };
       campaign.prospects += 1;
       if (isSale) campaign.sales += 1;
-      campaigns.set(prospect.campana, campaign);
+      campaigns.set(campaignKey(prospect.campana), campaign);
     });
 
     const visibleCampaigns = campaignOptions
-      .filter((campaign) => campaignFilters.length === 0 || campaignFilters.some((selected) => normalizedKey(campaign) === normalizedKey(selected)));
+      .filter((campaign) => campaignFilters.length === 0 || campaignFilters.some((selected) => campaignKey(campaign) === campaignKey(selected)));
     return {
       executiveData: Array.from(executives.values())
         .map((row) => ({ ...row, conversion: row.prospectos ? Math.round((row.ventas / row.prospectos) * 100) : 0 }))
         .sort((a, b) => b.prospectos - a.prospectos),
       campaignData: visibleCampaigns.map((campaign) => {
-        const totals = campaigns.get(campaign) || { prospects: 0, sales: 0 };
+        const totals = campaigns.get(campaignKey(campaign)) || { prospects: 0, sales: 0 };
         return {
           campaign,
           ...totals,
@@ -505,7 +487,7 @@ export default function Prospectos({ currentUser, users, sessions }: ProspectosP
       <section className="space-y-4">
         <div>
           <h2 className="text-lg font-black text-slate-900">Medición de Prospectos OJT</h2>
-          <p className="text-xs text-slate-500">Resultados de los últimos 5 días con actividad según los filtros aplicados.</p>
+          <p className="text-xs text-slate-500">Resultados según los filtros aplicados.</p>
         </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {[
@@ -521,17 +503,19 @@ export default function Prospectos({ currentUser, users, sessions }: ProspectosP
 
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.15fr_0.85fr]">
           <div className="glass-card rounded-2xl p-5">
-            <h3 className="flex items-center gap-2 text-sm font-black text-slate-800"><BarChart3 className="h-4 w-4 text-indigo-600" /> Prospectos por día</h3>
+            <h3 className="flex items-center gap-2 text-sm font-black text-slate-800"><BarChart3 className="h-4 w-4 text-indigo-600" /> Postulantes/Ejecutivos vs. Ventas realizadas</h3>
             <div className="mt-4 h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={dailyData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis dataKey="name" fontSize={11} stroke="#94a3b8" />
                   <YAxis allowDecimals={false} fontSize={11} stroke="#94a3b8" />
-                  <Tooltip />
+                  <Tooltip formatter={(value, name, item) => name === 'Postulantes/Ejecutivos'
+                    ? [`${value} (Aptos D5: ${item.payload['Postulantes aptos D5']}; OJT: ${item.payload['Ejecutivos OJT']}; sin etapa acreditada: ${item.payload['Sin etapa acreditada']})`, name]
+                    : [value, name]} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Bar dataKey="Prospectos" fill="#4f46e5" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="Ventas" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Postulantes/Ejecutivos" fill="#4f46e5" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Ventas realizadas" fill="#10b981" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

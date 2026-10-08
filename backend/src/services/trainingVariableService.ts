@@ -4,6 +4,11 @@ import { calculateTrainingVariableEvaluation } from './trainingVariableCalculato
 export type TrainingVariableStatus = 'BORRADOR' | 'CERRADO' | 'REABIERTO' | 'ANULADO';
 
 export interface TrainingVariableInput {
+  formula_version?: number;
+  porcentaje_rotacion?: number;
+  meses?: number[];
+  formador_ids?: string[];
+  campanas?: string[];
   anio: number;
   mes: number;
   id_formador: string;
@@ -73,8 +78,8 @@ const assertPeriod = (input: TrainingVariableInput) => {
   if (!input.id_formador.trim() || !input.nombre_formador.trim()) {
     throw new Error('El formador es obligatorio.');
   }
-  if (input.generation_ids?.length !== 1) {
-    throw new Error('La evaluación debe corresponder a una sola capacitación.');
+  if (!input.generation_ids?.length) {
+    throw new Error('Selecciona al menos una capacitación.');
   }
 };
 
@@ -83,27 +88,32 @@ const normalizeIds = (value: unknown) => Array.isArray(value)
   : [];
 
 const assertTrainingAssignment = async (input: TrainingVariableInput) => {
-  const trainingId = input.generation_ids![0];
-  const snapshot = await adminDb.collection('sessions').doc(trainingId).get();
-  if (!snapshot.exists) throw new Error('La capacitación seleccionada no existe.');
+  const codes: string[] = [];
+  for (const trainingId of new Set(input.generation_ids!)) {
+    const snapshot = await adminDb.collection('sessions').doc(trainingId).get();
+    if (!snapshot.exists) throw new Error('La capacitación seleccionada no existe.');
 
-  const session = snapshot.data() || {};
-  const assignedIds = new Set([
-    String(session.formador_id || '').trim(),
-    ...normalizeIds(session.formador_ids),
-    ...normalizeIds(session.formador_capacitacion_inicial_ids),
-    ...normalizeIds(session.formador_ojt_ids),
-  ].filter(Boolean));
-  if (!assignedIds.has(input.id_formador)) {
-    throw new Error('El formador seleccionado no está asociado a esta capacitación.');
+    const session = snapshot.data() || {};
+    const assignedIds = new Set([
+      String(session.formador_id || '').trim(),
+      ...normalizeIds(session.formador_ids),
+      ...normalizeIds(session.formador_capacitacion_inicial_ids),
+      ...normalizeIds(session.formador_ojt_ids),
+    ].filter(Boolean));
+    if (!(input.formador_ids?.length ? input.formador_ids : [input.id_formador]).some((id) => assignedIds.has(id))) {
+      throw new Error('El formador seleccionado no está asociado a esta capacitación.');
+    }
+
+    const startDate = String(session.fecha_inicio || '');
+    if (Number(startDate.slice(0, 4)) !== input.anio || !(input.meses?.length ? input.meses : [input.mes]).includes(Number(startDate.slice(5, 7)))) {
+      throw new Error('La capacitación no corresponde al periodo seleccionado.');
+    }
+
+    if (input.campanas?.length && !input.campanas.includes(String(session.campana || session['campaña'] || ''))) throw new Error('La capacitación no corresponde a las campañas seleccionadas.');
+    codes.push(String(session.generation_code || session.nombre_generacion || trainingId).trim());
   }
-
-  const startDate = String(session.fecha_inicio || '');
-  if (Number(startDate.slice(0, 4)) !== input.anio || Number(startDate.slice(5, 7)) !== input.mes) {
-    throw new Error('La capacitación no corresponde al periodo seleccionado.');
-  }
-
-  input.codigos_generacion = [String(session.generation_code || session.nombre_generacion || trainingId).trim()];
+  input.generation_ids = [...new Set(input.generation_ids)];
+  input.codigos_generacion = codes;
 };
 
 const getEvaluation = async (id: string) => {
@@ -125,15 +135,17 @@ export const getTrainingVariableEvaluationById = async (id: string, actor: Actor
 const assertNoDuplicate = async (input: TrainingVariableInput, currentId?: string) => {
   const snapshot = await adminDb
     .collection(COLLECTION)
-    .where('id_formador', '==', input.id_formador)
     .get();
 
   const duplicate = snapshot.docs.some((doc) => {
     if (doc.id === currentId) return false;
     const data = doc.data();
+    const trainers = input.formador_ids?.length ? input.formador_ids : [input.id_formador];
+    const existingTrainers = Array.isArray(data.formador_ids) && data.formador_ids.length ? data.formador_ids : [data.id_formador];
+    if (!trainers.some((id) => existingTrainers.includes(id))) return false;
     const selectedTrainingId = input.generation_ids?.[0];
     const sameTraining = selectedTrainingId
-      ? Array.isArray(data.generation_ids) && data.generation_ids.includes(selectedTrainingId)
+      ? Array.isArray(data.generation_ids) && input.generation_ids!.some((id) => data.generation_ids.includes(id))
       : data.anio === input.anio && data.mes === input.mes;
     return sameTraining && ACTIVE_STATES.includes(data.estado);
   });

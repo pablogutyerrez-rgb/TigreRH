@@ -23,6 +23,11 @@ import {
 const router = Router();
 
 const inputSchema = z.object({
+  formula_version: z.number().int().min(1).max(2).optional(),
+  porcentaje_rotacion: z.number().min(0).max(10).optional(),
+  meses: z.array(z.number().int().min(1).max(12)).min(1).optional(),
+  formador_ids: z.array(z.string().trim().min(1)).min(1).optional(),
+  campanas: z.array(z.string().trim().min(1)).optional(),
   anio: z.coerce.number().int().min(2020).max(2100),
   mes: z.coerce.number().int().min(1).max(12),
   id_formador: z.string().trim().min(1),
@@ -34,8 +39,8 @@ const inputSchema = z.object({
   porcentaje_satisfaccion: z.coerce.number().min(0).max(100),
   porcentaje_administrativo: z.coerce.number().min(0).max(100),
   observacion_administrativa: z.string().trim().optional().default(''),
-  generation_ids: z.array(z.string().trim().min(1)).length(1),
-  codigos_generacion: z.array(z.string().trim().min(1)).length(1),
+  generation_ids: z.array(z.string().trim().min(1)).min(1),
+  codigos_generacion: z.array(z.string().trim().min(1)).min(1),
   calculo_automatico: z.boolean().optional().default(false),
   calculo_detalle: z.object({
     participantes_dia_1: z.coerce.number().int().min(0),
@@ -47,14 +52,17 @@ const inputSchema = z.object({
 });
 
 const sourceQuerySchema = z.object({
+  meses: z.preprocess((v) => typeof v === 'string' ? v.split(',').map(Number) : v, z.array(z.number().int().min(1).max(12)).min(1).optional()),
   formador_id: z.string().trim().min(1).optional(),
   anio: z.coerce.number().int().min(2020).max(2100),
   mes: z.coerce.number().int().min(1).max(12),
 });
 
 const automaticCalculationSchema = sourceQuerySchema.extend({
+  formador_ids: z.array(z.string().trim().min(1)).min(1).optional(),
+  campanas: z.array(z.string().trim().min(1)).optional(),
   formador_id: z.string().trim().min(1),
-  generation_ids: z.array(z.string().trim().min(1)).length(1),
+  generation_ids: z.array(z.string().trim().min(1)).min(1),
 });
 
 const asActor = (req: AuthenticatedRequest) => ({
@@ -90,7 +98,7 @@ router.get('/fuentes/codigos', requireAuth, requireRole(['Administrador']), asyn
   }
 
   try {
-    const sources = await listTrainingVariableSources(parsed.data.anio, parsed.data.mes, parsed.data.formador_id);
+    const sources = await listTrainingVariableSources(parsed.data.anio, parsed.data.mes, parsed.data.formador_id, parsed.data.meses);
     res.json({ sources });
   } catch (error) {
     sendError(res, error);
@@ -110,6 +118,7 @@ router.post('/calcular/automatico', requireAuth, requireRole(['Administrador']),
       parsed.data.generation_ids,
       parsed.data.anio,
       parsed.data.mes,
+      parsed.data,
     );
     res.json({ calculation });
   } catch (error) {

@@ -2618,6 +2618,8 @@ export default function App() {
                   currentUser={activeUser}
                   users={users}
                   sessions={sessions}
+                  participants={participants}
+                  attendance={attendance}
                 />
               )}
 

@@ -1,70 +1,43 @@
 import * as XLSX from 'xlsx';
 import type { TrainingSession, OjtModule, Participant, AttendanceRecord, OperationConfirmation } from '../types';
 
+export const TRAINING_EXPORT_HEADERS = [
+  'Campaña', 'Código de generación', 'Nombre del postulante',
+  'Asistencia D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9', 'D10',
+  'Desistió (Sí/No)', 'Motivo de desistimiento/baja', 'Apto/No apto', 'Nota del examen',
+];
+const key = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+
 export const buildTrainingWorkbook = (
-  sessions: TrainingSession[], modules: OjtModule[], participants: Participant[],
-  attendance: AttendanceRecord[], confirmations: OperationConfirmation[],
+  sessions: TrainingSession[], _modules: OjtModule[], participants: Participant[],
+  attendance: AttendanceRecord[], _confirmations: OperationConfirmation[],
 ) => {
-  const workbook = XLSX.utils.book_new();
-  const ids = new Set(sessions.map((session) => session.id));
   const sessionMap = new Map(sessions.map((session) => [session.id, session]));
-  const people = participants.filter((person) => ids.has(person.training_session_id));
-  const personMap = new Map(people.map((person) => [person.id, person]));
-  const records = attendance.filter((record) => ids.has(record.training_session_id) && personMap.has(record.participant_id));
-  const highs = confirmations.filter((record) => ids.has(record.training_session_id) && personMap.has(record.participant_id));
   const byDay = new Map<string, AttendanceRecord>();
-  for (const record of records) {
-    const key = `${record.training_session_id}/${record.participant_id}/${record.dia}`;
-    const previous = byDay.get(key);
-    if (!previous || record.fecha_registro > previous.fecha_registro) byDay.set(key, record);
+  for (const record of attendance) {
+    if (!sessionMap.has(record.training_session_id)) continue;
+    const id = `${record.training_session_id}/${record.participant_id}/${record.dia}`;
+    const previous = byDay.get(id);
+    if (!previous || record.fecha_registro > previous.fecha_registro) byDay.set(id, record);
   }
-  const context = (sessionId: string, personId?: string) => {
-    const session = sessionMap.get(sessionId);
-    const person = personId ? personMap.get(personId) : undefined;
-    return {
-      Campaña: session?.campaña || '', Generación: session?.nombre_generacion || '',
-      Código: session?.generation_code || session?.nombre_generacion || '',
-      ...(person ? { Nombres: person.nombres, Apellidos: person.apellidos, Documento: person.dni } : {}),
-    };
-  };
-  const extended: Record<string, unknown>[] = [];
-  const append = (name: string, rows: Record<string, unknown>[]) => {
-    const data = rows.map((row, index) => Object.fromEntries(Object.entries(row).map(([key, value]) => {
-      const cell = value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : value;
-      if (typeof cell !== 'string' || cell.length <= 30000) return [key, cell];
-      for (let offset = 0; offset < cell.length; offset += 30000) {
-        extended.push({ Hoja: name, Fila: index + 2, Campo: key, Parte: offset / 30000 + 1, Contenido: cell.slice(offset, offset + 30000) });
-      }
-      return [key, 'Ver hoja Datos extensos'];
-    })));
-    const sheet = XLSX.utils.json_to_sheet(data);
-    XLSX.utils.book_append_sheet(workbook, sheet, name);
-  };
-  append('Capacitaciones', sessions.map((session) => ({ ...context(session.id), ...session })));
-  append('OJT', modules.map((module) => {
-    const generationIds = module.generation_ids.filter((id) => ids.has(id));
-    return {
-      ...module, generation_ids: generationIds,
-      generation_codes: generationIds.map((id) => sessionMap.get(id)?.generation_code || sessionMap.get(id)?.nombre_generacion || id),
-      participant_ids: module.participant_ids.filter((id) => personMap.has(id)),
-    };
-  }));
-  append('Postulantes', people.map((person) => {
-    const row: Record<string, unknown> = { ...context(person.training_session_id, person.id), ...person };
-    for (let day = 1; day <= 10; day++) {
-      const record = byDay.get(`${person.training_session_id}/${person.id}/${day}`);
-      row[`Día ${day}`] = record?.estado_asistencia || '';
-      row[`Fecha día ${day}`] = record?.fecha || '';
-      row[`Observación día ${day}`] = record?.observacion || '';
-      row[`Motivo día ${day}`] = record?.motivo_desercion || '';
-    }
-    const confirmation = highs.filter((item) => item.participant_id === person.id && !item.isDeleted && item.estado_alta !== 'Eliminada')
-      .sort((a, b) => b.fecha_registro.localeCompare(a.fecha_registro))[0];
-    row.Alta = confirmation?.estado_alta || person.estado_alta || '';
-    return row;
-  }));
-  append('Asistencia', records.map((record) => ({ ...context(record.training_session_id, record.participant_id), ...record })));
-  append('Altas', highs.map((record) => ({ ...context(record.training_session_id, record.participant_id), ...record })));
-  if (extended.length) append('Datos extensos', extended);
+  const people = [...new Map(participants.filter((p) => sessionMap.has(p.training_session_id))
+    .map((p) => [`${p.training_session_id}/${p.id}`, p])).values()];
+  const rows = people.map((person) => {
+    const session = sessionMap.get(person.training_session_id)!;
+    const records = Array.from({ length: 10 }, (_, index) =>
+      byDay.get(`${person.training_session_id}/${person.id}/${index + 1}`));
+    const states = records.map((record, index) => record?.estado_asistencia
+      ?? person[`asistencia_dia_${index + 1}` as keyof Participant] ?? '');
+    const reasons = records.filter((record) => record && ['desistio', 'baja'].includes(key(record.estado_asistencia)))
+      .map((record) => record!.motivo_desercion || record!.observacion || '').filter(Boolean);
+    const outcome = session.training_model === 'split_ojt' && person.resultado_formacion_ojt && person.resultado_formacion_ojt !== 'Marcar'
+      ? person.resultado_formacion_ojt : person.resultado_formacion;
+    return [session.campaña || '', session.generation_code || session.nombre_generacion || '',
+      `${person.nombres || ''} ${person.apellidos || ''}`.trim(), ...states,
+      states.some((state) => key(String(state)) === 'desistio') ? 'Sí' : 'No',
+      [...new Set(reasons.length ? reasons : person.motivo_desercion ? [person.motivo_desercion] : [])].join('; '), outcome === 'Marcar' ? '' : outcome || '', person.evaluacion_nota ?? ''];
+  }).sort((a, b) => String(a[0]).localeCompare(String(b[0]), 'es') || String(a[1]).localeCompare(String(b[1]), 'es'));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([TRAINING_EXPORT_HEADERS, ...rows]), 'Postulantes');
   return workbook;
 };
