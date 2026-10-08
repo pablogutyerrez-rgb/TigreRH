@@ -162,6 +162,7 @@ export const calculateTrainingVariableFromData = async (
   const selectedIdSet = new Set(selectedIds);
   const selectedCodes = validSessions.map((session) => sourceFromSession(session).codigo);
   const selectedParticipants = participants.filter((participant) => selectedIdSet.has(normalizeText(participant.training_session_id)));
+  const selectedParticipantIds = new Set(selectedParticipants.map((participant) => participant.id));
   const selectedAttendance = attendance.filter((record) => selectedIdSet.has(normalizeText(record.training_session_id)));
 
   if (filters?.campanas?.length && validSessions.some((session) =>
@@ -178,11 +179,8 @@ export const calculateTrainingVariableFromData = async (
   const finalDayCount = phases.reduce((sum, phase) => sum + phase.d10Ids.size, 0);
   const altasOperacion = new Set([
     ...confirmations
-      .filter((record) => selectedIdSet.has(normalizeText(record.training_session_id)) && !record.isDeleted && normalizeText(record.estado_alta) === 'Alta confirmada')
+      .filter((record) => selectedParticipantIds.has(normalizeText(record.participant_id)) && !record.isDeleted && normalizeText(record.estado_alta) === 'Alta confirmada')
       .map((record) => normalizeText(record.participant_id)),
-    ...selectedParticipants
-      .filter((participant) => normalizeText(participant.estado_alta) === 'Alta confirmada' || normalizeText(participant.estado_final) === 'Alta confirmada')
-      .map((participant) => participant.id),
   ].filter(Boolean));
   const retention = dayOneCount > 0 ? altasOperacion.size / dayOneCount * 100 : 0;
   const ventasReales = selectedParticipants.reduce((total, participant) => {

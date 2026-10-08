@@ -26,7 +26,7 @@ const data = {
     { id: 'a', generation_code: 'A', campana: 'Culqi', fecha_inicio: '2026-09-01', fecha_fin: '2026-09-30', formador_ids: ['f', 'g'] },
     { id: 'b', generation_code: 'B', campana: 'Equifax', fecha_inicio: '2026-10-01', fecha_fin: '2026-10-30', formador_id: 'g' },
   ],
-  participants: [{ id: 'p', training_session_id: 'a', ventas_ojt: 1 }, { id: 'q', training_session_id: 'a' }, { id: 'r', training_session_id: 'b', ventas_ojt: 0 }],
+  participants: [{ id: 'p', training_session_id: 'a', ventas_ojt: 1 }, { id: 'q', training_session_id: 'a', estado_final: 'Alta confirmada' }, { id: 'r', training_session_id: 'b', ventas_ojt: 0 }],
   attendance: [
     { id: '0', training_session_id: 'a', participant_id: 'p', dia: 1, estado_asistencia: 'Asistió' },
     { id: '0a', training_session_id: 'a', participant_id: 'q', dia: 1, estado_asistencia: 'Tardanza' },

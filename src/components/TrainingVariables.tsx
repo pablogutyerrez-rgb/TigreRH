@@ -760,7 +760,9 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                     }}
                   >
                     {!currentFormula && <PercentInput label="Cumplimiento individual" value={form.porcentaje_produccion_individual} disabled={isReadOnly} onChange={(value) => updateForm('porcentaje_produccion_individual', value)} />}
-                    <PercentInput label={currentFormula ? "Productividad OJT" : "Cumplimiento grupal"} value={form.porcentaje_produccion_grupal} disabled={isReadOnly} onChange={(value) => updateForm('porcentaje_produccion_grupal', value)} />
+                    {currentFormula && form.calculo_automatico && form.calculo_detalle?.productividad_disponible === false
+                      ? <ReadMetric label="Productividad OJT" value="Sin datos" />
+                      : <PercentInput label={currentFormula ? "Productividad OJT" : "Cumplimiento grupal"} value={form.porcentaje_produccion_grupal} disabled={isReadOnly} onChange={(value) => updateForm('porcentaje_produccion_grupal', value)} />}
                     <ReadMetric label="Aporte grupal" value={`${preview.aporte_produccion.toFixed(2)} puntos`} />
                   </KpiCard>
                   <KpiCard
