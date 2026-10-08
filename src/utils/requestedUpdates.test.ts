@@ -24,9 +24,9 @@ test('nueva formula, candado, limites y paridad con servidor', () => {
 const data = {
   sessions: [
     { id: 'a', generation_code: 'A', campana: 'Culqi', fecha_inicio: '2026-09-01', fecha_fin: '2026-09-30', formador_ids: ['f', 'g'] },
-    { id: 'b', generation_code: 'B', campana: 'Equifax', fecha_inicio: '2026-10-01', fecha_fin: '2026-10-30', formador_id: 'g' },
+    { id: 'b', generation_code: 'B', campana: 'Entel Empresas RUC 10', fecha_inicio: '2026-10-01', fecha_fin: '2026-10-30', formador_id: 'g' },
   ],
-  participants: [{ id: 'p', training_session_id: 'a', ventas_ojt: 1 }, { id: 'q', training_session_id: 'a', estado_final: 'Alta confirmada' }, { id: 'r', training_session_id: 'b', ventas_ojt: 0 }],
+  participants: [{ id: 'p', training_session_id: 'a', ventas_ojt: 1 }, { id: 'q', training_session_id: 'a', estado_final: 'Alta confirmada', ventas_ojt: 0 }, { id: 'r', training_session_id: 'b', ventas_ojt: 2 }],
   attendance: [
     { id: '0', training_session_id: 'a', participant_id: 'p', dia: 1, estado_asistencia: 'Asistió' },
     { id: '0a', training_session_id: 'a', participant_id: 'q', dia: 1, estado_asistencia: 'Tardanza' },
@@ -41,19 +41,33 @@ const data = {
   surveys: [{ id: 'sa', training_session_id: 'a' }, { id: 'sb', training_session_id: 'b' }],
   responses: [{ id: 'ra', training_survey_id: 'sa', final_score_20: 18 }, { id: 'rb', training_survey_id: 'sb', final_score_20: 20 }],
 };
-test('multiseleccion usa datos OJT reales y no duplica', async () => {
+test('multiseleccion usa ventas OJT y metas reales por campaña', async () => {
   const sourceData = { ...data, rotation: { disponible: true, porcentaje: 5, bajas: 1, dotacion: 20 } };
   const result = await calculateTrainingVariableFromData('f', ['a', 'b', 'a'], 2026, 9, sourceData, { meses: [9, 10], formador_ids: ['f', 'g'] });
   assert.deepEqual(result.generation_ids, ['a', 'b']);
   assert.equal(result.porcentaje_retencion, 66.67);
-  assert.equal(result.porcentaje_produccion_grupal, 50);
+  assert.equal(result.porcentaje_produccion_grupal, 100);
   assert.equal(result.porcentaje_satisfaccion, 95);
   assert.equal(result.detalle.altas_operacion, 2);
-  assert.equal(result.detalle.ventas_reales, 1);
+  assert.equal(result.detalle.ventas_reales, 3);
   assert.equal(result.porcentaje_rotacion, 5);
   await assert.rejects(() => calculateTrainingVariableFromData('f', ['b'], 2026, 9, sourceData), /formador/);
   await assert.rejects(() => calculateTrainingVariableFromData('g', ['b'], 2026, 9, sourceData), /periodo/);
   await assert.rejects(() => calculateTrainingVariableFromData('g', ['b'], 2026, 10, sourceData, { campanas: ['Culqi'] }), /campañas/);
+});
+test('diez altas RUC10 y veinte ventas alcanzan productividad máxima', async () => {
+  const participants = Array.from({ length: 10 }, (_, index) => ({ id: `ruc-${index}`, training_session_id: 'ruc', ventas_ojt: 2 }));
+  const sourceData = {
+    sessions: [{ id: 'ruc', generation_code: 'RUC', campana: 'Entel Empresas RUC 10', fecha_inicio: '2026-09-01', fecha_fin: '2026-09-30', formador_id: 'f' }],
+    participants,
+    attendance: participants.map((participant, index) => ({ id: `a-${index}`, training_session_id: 'ruc', participant_id: participant.id, dia: 1, estado_asistencia: 'Asistió' })),
+    confirmations: participants.map((participant, index) => ({ id: `c-${index}`, training_session_id: 'ruc', participant_id: participant.id, estado_alta: 'Alta confirmada' })),
+    surveys: [], responses: [], rotation: { disponible: true, porcentaje: 0, bajas: 0, dotacion: 1 },
+  };
+  const result = await calculateTrainingVariableFromData('f', ['ruc'], 2026, 9, sourceData);
+  assert.equal(result.detalle.altas_operacion, 10);
+  assert.equal(result.detalle.ventas_reales, 20);
+  assert.equal(result.porcentaje_produccion_grupal, 100);
 });
 test('importa bajas desde BASE con fechas seriales y DNI numérico', () => {
   const rows = normalizeTerminations([{

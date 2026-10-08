@@ -50,6 +50,13 @@ const normalizeIds = (value: unknown) => Array.isArray(value)
   ? value.map(normalizeText).filter(Boolean)
   : [];
 
+const productivityCampaign = (campaign: unknown): 'ruc10' | 'culqi' | null => {
+  const normalized = normalizeCampaignKey(campaign);
+  if (normalized === 'culqi') return 'culqi';
+  if (normalized === 'entelruc10' || normalized === 'entelempresasruc10') return 'ruc10';
+  return null;
+};
+
 const assignedTrainerIds = (session: StoredRecord) => Array.from(new Set([
   normalizeText(session.formador_id),
   ...normalizeIds(session.formador_ids),
@@ -183,12 +190,28 @@ export const calculateTrainingVariableFromData = async (
       .map((record) => normalizeText(record.participant_id)),
   ].filter(Boolean));
   const retention = dayOneCount > 0 ? altasOperacion.size / dayOneCount * 100 : 0;
-  const ventasReales = selectedParticipants.reduce((total, participant) => {
+  const sessionCampaigns = new Map(validSessions.map((session) => [session.id, productivityCampaign(session.campana || session['campaña'])]));
+  const participantById = new Map(selectedParticipants.map((participant) => [participant.id, participant]));
+  const altaMetaByCampaign = { ruc10: 0, culqi: 0 };
+  altasOperacion.forEach((participantId) => {
+    const participant = participantById.get(participantId);
+    const campaign = participant && sessionCampaigns.get(normalizeText(participant.training_session_id));
+    if (campaign) altaMetaByCampaign[campaign] += 1;
+  });
+  const altasProductividad = altaMetaByCampaign.ruc10 + altaMetaByCampaign.culqi;
+  const metaVentas = altaMetaByCampaign.ruc10 * 2 + altaMetaByCampaign.culqi;
+  const salesParticipants = selectedParticipants.filter((participant) =>
+    Boolean(sessionCampaigns.get(normalizeText(participant.training_session_id))),
+  );
+  const ventasRegistradas = salesParticipants.filter((participant) =>
+    participant.ventas_ojt !== undefined && participant.ventas_ojt !== null && participant.ventas_ojt !== '',
+  );
+  const ventasReales = ventasRegistradas.reduce((total, participant) => {
     const ventas = Number(participant.ventas_ojt);
     return total + (Number.isFinite(ventas) && ventas > 0 ? ventas : 0);
   }, 0);
-  const productivityAvailable = altasOperacion.size > 0;
-  const production = productivityAvailable ? Math.min(100, ventasReales / altasOperacion.size * 100) : 0;
+  const productivityAvailable = metaVentas > 0 && salesParticipants.length > 0 && ventasRegistradas.length === salesParticipants.length;
+  const production = productivityAvailable ? Math.min(100, ventasReales / metaVentas * 100) : 0;
 
   const selectedSurveyIds = new Set(
     surveys
@@ -225,7 +248,7 @@ export const calculateTrainingVariableFromData = async (
       prospectos_generados: 0,
       prospectos_venta_alta: 0,
       respuestas_encuesta: selectedResponses.length,
-      altas_operacion: altasOperacion.size,
+      altas_operacion: altasProductividad,
       ventas_reales: ventasReales,
       productividad_disponible: productivityAvailable,
       rotacion_disponible: rotation.disponible,
