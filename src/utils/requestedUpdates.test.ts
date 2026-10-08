@@ -4,6 +4,7 @@ import { calculateTrainingVariableEvaluation as backend } from '../../backend/sr
 import { calculateTrainingVariablePreview as preview } from './trainingVariableCalculator';
 import { calculateTrainingVariableFromData } from '../../backend/src/services/trainingVariableSourceService';
 import { normalizeTerminations } from '../../backend/src/services/rotationService';
+import { inspectCommercialImport } from '../../backend/src/services/commercialService';
 import { prospectComparison, campaignKey, filterProspectRecords } from './prospectMetrics';
 import { buildTrainingWorkbook, TRAINING_EXPORT_HEADERS } from './trainingExport';
 import * as XLSX from 'xlsx';
@@ -80,6 +81,13 @@ test('importa bajas desde BASE con fechas seriales y DNI numérico', () => {
   assert.equal(rows[0].dni, '130365');
   assert.equal(rows[0].nombre, 'Marcos Capusari');
   assert.throws(() => normalizeTerminations([{ DNI: '1', CESE: 45292 }]), /Fila 2: falta CAMPAÑA/);
+});
+test('inspeccion comercial reconstruye Culqi y conserva pendientes reales', () => {
+  const result = inspectCommercialImport({ campaign: 'Culqi', file: { name: 'culqi.xlsx', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content_base64: 'AA==', sha256: 'a'.repeat(64) }, sheets: [{ name: 'BASE', headers: ['Terminal', 'Comercio', 'Fecha venta', 'GPV', 'Transacciones', 'Supervisor'], formulas: ['SUM(D:D)'], row_count: 2, rows: [{ Terminal: 'T-1', Comercio: 'C-1', 'Fecha venta': '2026-09-20', GPV: 1200, Transacciones: 4, Supervisor: 'Ana' }, { Terminal: 'T-2', Comercio: 'C-1', 'Fecha venta': '2026-09-20', GPV: 0, Transacciones: 0, Supervisor: 'Ana' }] }] });
+  assert.equal(result.records.length, 2);
+  assert.equal(result.records[0].activation, true);
+  assert.equal(result.records[1].postventa, 'Sin transacciones');
+  assert.equal(result.inspection.formulas.length, 1);
 });
 test('comparacion cuenta ventas sin limite de fechas y deduplica ejecutivos', () => {
   const prospects = Array.from({ length: 12 }, (_, i) => ({ id: String(i), campana: 'Culqi', training_session_id: 'a',

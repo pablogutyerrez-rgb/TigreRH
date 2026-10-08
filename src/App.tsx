@@ -41,7 +41,8 @@ import {
   ClipboardCheck,
   BriefcaseBusiness,
   UserCheck,
-  Calculator
+  Calculator,
+  Handshake
 } from 'lucide-react';
 
 // Subcomponents
@@ -60,6 +61,7 @@ import Seleccion, { type SelectionViewMode } from './components/Seleccion';
 import TrainingVariables from './components/TrainingVariables';
 import Prospectos from './components/Prospectos';
 import Rotacion from './components/Rotacion';
+import GestionComercial from './components/GestionComercial';
 
 import { getPeruNow, formatPeruDate, isAttendanceWindowOpen } from './utils/time';
 import { permissions } from './utils/permissions';
@@ -130,7 +132,7 @@ const EMPTY_SURVEYS: TrainingSurvey[] = [];
 const EMPTY_RESPONSES: SurveyResponse[] = [];
 
 const getDefaultAreasForRole = (role: User['rol']): UserArea[] => {
-  if (role === 'Administrador') return ['seleccion', 'formacion', 'administrador'];
+  if (role === 'Administrador') return ['seleccion', 'formacion', 'comercial', 'administrador'];
   if (role === 'Formador') return ['formacion'];
   return ['seleccion', 'formacion'];
 };
@@ -146,6 +148,7 @@ const userHasExplicitModuleAccess = (user: User, area: UserArea, moduleId: strin
   Boolean(user.module_access?.includes(getModuleAccessKey(area, moduleId)));
 
 const userHasAreaAccess = (user: User, area: UserArea) => {
+  if (area === 'comercial' && user.rol === 'Administrador') return true;
   if (!hasConfiguredUserAccess(user)) return getDefaultAreasForRole(user.rol).includes(area);
   return Boolean(user.areas?.includes(area) || user.module_access?.some(moduleId => moduleId.startsWith(`${area}:`)));
 };
@@ -159,6 +162,7 @@ const userHasModuleAccess = (user: User, area: UserArea, moduleId: string) => {
   ) return true;
   // Los administradores conservan acceso al nuevo módulo aunque su lista histórica sea explícita.
   if (area === 'formacion' && moduleId === 'rotacion' && user.rol === 'Administrador') return true;
+  if (area === 'comercial' && user.rol === 'Administrador') return true;
   if (userHasExplicitModuleAccess(user, area, moduleId)) return true;
   if (user.module_access && user.module_access.length > 0) return false;
   if (area === 'formacion' && moduleId === 'variables') return user.rol === 'Administrador';
@@ -190,6 +194,10 @@ const getDefaultRouteForUser = (user: User): { currentView: string; selectionVie
     { area: 'formacion', moduleId: 'variables', currentView: 'variables' },
     { area: 'formacion', moduleId: 'rotacion', currentView: 'rotacion' },
     { area: 'formacion', moduleId: 'reportes', currentView: 'reportes' },
+    { area: 'comercial', moduleId: 'dashboard', currentView: 'comercial-dashboard' },
+    { area: 'comercial', moduleId: 'ventas', currentView: 'comercial-ventas' },
+    { area: 'comercial', moduleId: 'postventa', currentView: 'comercial-postventa' },
+    { area: 'comercial', moduleId: 'datos', currentView: 'comercial-datos' },
     { area: 'administrador', moduleId: 'usuarios', currentView: 'usuarios' },
     { area: 'administrador', moduleId: 'reportes', currentView: 'reportes' },
     { area: 'administrador', moduleId: 'auditoria', currentView: 'auditoria' },
@@ -234,6 +242,16 @@ const getAdminViewForUser = (user: User): string => {
     { moduleId: 'auditoria', currentView: 'auditoria' },
   ];
   return adminRoutes.find(route => userHasModuleAccess(user, 'administrador', route.moduleId))?.currentView || 'usuarios';
+};
+
+const getCommercialViewForUser = (user: User): string => {
+  const routes = [
+    { moduleId: 'dashboard', currentView: 'comercial-dashboard' },
+    { moduleId: 'ventas', currentView: 'comercial-ventas' },
+    { moduleId: 'postventa', currentView: 'comercial-postventa' },
+    { moduleId: 'datos', currentView: 'comercial-datos' },
+  ];
+  return routes.find((route) => userHasModuleAccess(user, 'comercial', route.moduleId))?.currentView || 'comercial-dashboard';
 };
 
 export default function App() {
@@ -2073,7 +2091,8 @@ export default function App() {
     (currentView === 'encuestas' && userHasModuleAccess(activeUser, 'formacion', 'encuestas')) ||
     (currentView === 'variables' && userHasModuleAccess(activeUser, 'formacion', 'variables')) ||
     (currentView === 'rotacion' && userHasModuleAccess(activeUser, 'formacion', 'rotacion')) ||
-    (currentView === 'prospectos' && userHasModuleAccess(activeUser, 'formacion', 'prospectos'))
+    (currentView === 'prospectos' && userHasModuleAccess(activeUser, 'formacion', 'prospectos')) ||
+    (currentView.startsWith('comercial-') && userHasAreaAccess(activeUser, 'comercial'))
   ) : false;
 
   return (
@@ -2192,12 +2211,24 @@ export default function App() {
                         setSelectedSessionId(null);
                       }}
                       className={`group w-full rounded-2xl px-2 py-3 flex flex-col items-center gap-1 text-[10px] font-black transition ${
-                        currentView !== 'seleccion' && !(['usuarios', 'reportes', 'auditoria'].includes(currentView) && userHasAreaAccess(activeUser, 'administrador')) ? 'bg-white text-slate-950 shadow-lg' : 'text-white/65 hover:bg-white/10 hover:text-white'
+                        currentView !== 'seleccion' && !currentView.startsWith('comercial-') && !(['usuarios', 'reportes', 'auditoria'].includes(currentView) && userHasAreaAccess(activeUser, 'administrador')) ? 'bg-white text-slate-950 shadow-lg' : 'text-white/65 hover:bg-white/10 hover:text-white'
                       }`}
                       title="Formación"
                     >
                       <BookOpen className="w-5 h-5" />
                       <span>Formación</span>
+                    </button>
+                  )}
+                  {userHasAreaAccess(activeUser, 'comercial') && (
+                    <button
+                      onClick={() => { setCurrentView(getCommercialViewForUser(activeUser)); setSelectedSessionId(null); }}
+                      className={`group w-full rounded-2xl px-2 py-3 flex flex-col items-center gap-1 text-[10px] font-black transition ${
+                        currentView.startsWith('comercial-') ? 'bg-white text-slate-950 shadow-lg' : 'text-white/65 hover:bg-white/10 hover:text-white'
+                      }`}
+                      title="Gestión Comercial"
+                    >
+                      <Handshake className="w-5 h-5" />
+                      <span>Comercial</span>
                     </button>
                   )}
                   {userHasAreaAccess(activeUser, 'administrador') && (
@@ -2229,6 +2260,8 @@ export default function App() {
                       <p className="text-[10px] font-black uppercase tracking-widest text-fuchsia-600">
                         {currentView === 'seleccion'
                           ? 'Módulo Selección'
+                          : currentView.startsWith('comercial-')
+                            ? 'Gestión Comercial'
                           : ['usuarios', 'reportes', 'auditoria'].includes(currentView) && userHasAreaAccess(activeUser, 'administrador')
                             ? 'Módulo Administrador'
                             : 'Módulo Formación'}
@@ -2236,6 +2269,8 @@ export default function App() {
                       <h2 className="mt-1 text-lg font-black text-slate-950 truncate">
                         {currentView === 'seleccion'
                           ? 'Selección Masiva'
+                          : currentView.startsWith('comercial-')
+                            ? 'Gestión Comercial'
                           : ['usuarios', 'reportes', 'auditoria'].includes(currentView) && userHasAreaAccess(activeUser, 'administrador')
                             ? 'Administración'
                             : 'Formación y Desarrollo'}
@@ -2259,7 +2294,8 @@ export default function App() {
                   {(() => {
                     const inSelection = currentView === 'seleccion' && userHasAreaAccess(activeUser, 'seleccion');
                     const inAdmin = ['usuarios', 'reportes', 'auditoria'].includes(currentView) && userHasAreaAccess(activeUser, 'administrador');
-                    const activeArea: UserArea = inSelection ? 'seleccion' : inAdmin ? 'administrador' : 'formacion';
+                    const inCommercial = currentView.startsWith('comercial-') && userHasAreaAccess(activeUser, 'comercial');
+                    const activeArea: UserArea = inSelection ? 'seleccion' : inAdmin ? 'administrador' : inCommercial ? 'comercial' : 'formacion';
                     const selectionGroups = [
                       { title: 'Monitoreo', items: [['dashboard', 'Dashboard de Selección', LayoutDashboard]] },
                       {
@@ -2329,7 +2365,13 @@ export default function App() {
                         ],
                       },
                     ];
-                    const groups = inSelection ? selectionGroups : inAdmin ? adminGroups : formationGroups;
+                    const commercialGroups = [{ title: 'Gestión Comercial', items: [
+                      ['dashboard', 'Dashboard Comercial', LayoutDashboard, ['Administrador']],
+                      ['ventas', 'Ventas', BriefcaseBusiness, ['Administrador']],
+                      ['postventa', 'Postventa', Handshake, ['Administrador']],
+                      ['datos', 'Gestión de Datos', FileSpreadsheet, ['Administrador']],
+                    ] }];
+                    const groups = inSelection ? selectionGroups : inAdmin ? adminGroups : inCommercial ? commercialGroups : formationGroups;
                     return groups.map((group) => {
                       const visibleItems = group.items.filter((item) => {
                         const roles = item[3] as string[] | undefined;
@@ -2345,7 +2387,7 @@ export default function App() {
                           <div className="space-y-1">
                             {visibleItems.map(([view, label, Icon]) => {
                               const MenuIcon = Icon as typeof Users;
-                              const isActive = inSelection ? currentView === 'seleccion' && selectionView === view : currentView === view;
+                              const isActive = inSelection ? currentView === 'seleccion' && selectionView === view : inCommercial ? currentView === `comercial-${String(view)}` : currentView === view;
                               const pendingReopens = view === 'reaperturas' ? reopens.filter(r => r.estado === 'pendiente').length : 0;
                               return (
                                 <button
@@ -2354,6 +2396,8 @@ export default function App() {
                                     if (inSelection) {
                                       setCurrentView('seleccion');
                                       setSelectionView(view as SelectionViewMode);
+                                    } else if (inCommercial) {
+                                      setCurrentView(`comercial-${String(view)}`);
                                     } else {
                                       setCurrentView(String(view));
                                     }
@@ -2631,6 +2675,13 @@ export default function App() {
                   sessions={sessions}
                   participants={participants}
                   attendance={attendance}
+                />
+              )}
+
+              {currentView.startsWith('comercial-') && userHasAreaAccess(activeUser, 'comercial') && (
+                <GestionComercial
+                  currentUser={activeUser}
+                  initialView={currentView.replace('comercial-', '') as 'dashboard' | 'ventas' | 'postventa' | 'datos'}
                 />
               )}
 

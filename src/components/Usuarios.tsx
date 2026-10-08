@@ -36,6 +36,7 @@ const MULTI_AREA_ROLES: UserRole[] = ['Administrador', 'Analista', 'Coordinador'
 const AREA_OPTIONS: Array<{ id: UserArea; label: string; description: string }> = [
   { id: 'seleccion', label: 'Selección', description: 'Convocatorias, postulantes, seguimiento y asignación.' },
   { id: 'formacion', label: 'Formación', description: 'Capacitaciones, asistencia, altas y encuestas.' },
+  { id: 'comercial', label: 'Gestión Comercial', description: 'Dashboard, ventas, postventa y gestión de datos.' },
   { id: 'administrador', label: 'Administrador', description: 'Usuarios, reportes exportables y auditoría.' },
 ];
 
@@ -69,6 +70,12 @@ const MODULE_OPTIONS: Record<UserArea, Array<{ id: string; label: string }>> = {
     { id: 'formacion:rotacion', label: 'Rotación' },
     { id: 'formacion:reportes', label: 'Reportes Exportables' },
   ],
+  comercial: [
+    { id: 'comercial:dashboard', label: 'Dashboard Comercial' },
+    { id: 'comercial:ventas', label: 'Ventas' },
+    { id: 'comercial:postventa', label: 'Postventa' },
+    { id: 'comercial:datos', label: 'Gestión de Datos' },
+  ],
   administrador: [
     { id: 'administrador:usuarios', label: 'Usuarios' },
     { id: 'administrador:reportes', label: 'Reportes Exportables' },
@@ -77,7 +84,7 @@ const MODULE_OPTIONS: Record<UserArea, Array<{ id: string; label: string }>> = {
 };
 
 const defaultAreasByRole = (role: UserRole): UserArea[] => {
-  if (role === 'Administrador') return ['seleccion', 'formacion', 'administrador'];
+  if (role === 'Administrador') return ['seleccion', 'formacion', 'comercial', 'administrador'];
   if (role === 'Analista' || role === 'Coordinador' || role === 'Sistemas') return ['seleccion', 'formacion'];
   if (role === 'Reclutador') return ['seleccion'];
   return ['formacion'];

@@ -4,7 +4,7 @@
  */
 
 export type UserRole = 'Administrador' | 'Analista' | 'Reclutador' | 'Formador' | 'Coordinador' | 'Sistemas';
-export type UserArea = 'seleccion' | 'formacion' | 'administrador';
+export type UserArea = 'seleccion' | 'formacion' | 'comercial' | 'administrador';
 
 export interface User {
   id: string;
