@@ -2486,6 +2486,7 @@ export default function App() {
                 </div>
               )}
 
+              {platformLoaded && !platformLoading && !platformError && <>
               {/* If "asistencia" is clicked but no session is selected, guide them to pick one */}
               {currentView === 'asistencia' && !selectedSessionId && userHasModuleAccess(activeUser, 'formacion', 'asistencia') && (
                 <div className="space-y-4">
@@ -2691,8 +2692,9 @@ export default function App() {
                   initialView={currentView.replace('comercial-', '') as 'dashboard' | 'ventas' | 'postventa' | 'datos'}
                 />
               )}
+              </>}
 
-              {!platformLoading && !platformError && !canRenderCurrentView && (
+              {platformLoaded && !platformLoading && !platformError && !canRenderCurrentView && (
                 <div role="alert" className="bg-white border border-amber-200 rounded-xl p-6 shadow-xs">
                   <h3 className="text-base font-extrabold text-slate-900">No hay un módulo disponible</h3>
                   <p className="mt-2 text-sm text-slate-600">
