@@ -20,6 +20,12 @@ const canPatchTraining = [
   requireRole(['Administrador', 'Analista', 'Reclutador', 'Coordinador', 'Formador']),
 ];
 const entitySchema = z.object({ id: z.string().min(1) }).passthrough();
+type InitialAttendanceRecord = z.infer<typeof entitySchema> & {
+  participant_id: string;
+  dia: number;
+  training_session_id: string;
+  fecha: string;
+};
 
 const isAssignedTrainer = (data: Record<string, unknown> | undefined, userId: string) =>
   data?.formador_id === userId ||
@@ -243,9 +249,23 @@ router.post('/', canManageTraining, async (req: AuthenticatedRequest, res: Respo
     return;
   }
   const session = { ...parsed.data.session, training_days: 5, training_model: 'split_ojt', fecha_fin: businessDay(start, 5) };
-  if (attendance.some((record) => !Number.isInteger(Number(record.dia)) || Number(record.dia) < 1 || Number(record.dia) > 5 ||
-    record.training_session_id !== session.id || record.fecha !== businessDay(start, Number(record.dia))) ||
-    participants.some((participant) => participant.training_session_id !== session.id)) {
+  const participantIds = new Set(participants.map((participant) => String(participant.id)));
+  const initialAttendance: InitialAttendanceRecord[] = attendance
+    .filter((record) => {
+      const day = Number(record.dia);
+      return Number.isInteger(day) && day >= 1 && day <= 5 && participantIds.has(String(record.participant_id));
+    })
+    .map((record) => ({
+      ...record,
+      participant_id: String(record.participant_id),
+      dia: Number(record.dia),
+      training_session_id: session.id,
+      fecha: businessDay(start, Number(record.dia)),
+    }));
+  const attendanceKeys = new Set(initialAttendance.map((record) => `${record.participant_id}/${record.dia}`));
+  if (participants.some((participant) => participant.training_session_id !== session.id) ||
+    initialAttendance.length !== participants.length * 5 ||
+    attendanceKeys.size !== initialAttendance.length) {
     res.status(400).json({ message: 'La asistencia inicial debe contener solo los cinco dias habiles de esta capacitacion.' });
     return;
   }
@@ -261,7 +281,7 @@ router.post('/', canManageTraining, async (req: AuthenticatedRequest, res: Respo
   participants.forEach((participant) =>
     writer.set(adminDb.collection('participants').doc(participant.id), participant),
   );
-  attendance.forEach((record) =>
+  initialAttendance.forEach((record) =>
     writer.set(adminDb.collection('attendance').doc(record.id), record),
   );
   await writer.close();
