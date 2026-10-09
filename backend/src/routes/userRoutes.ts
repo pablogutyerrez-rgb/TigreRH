@@ -30,7 +30,7 @@ const roleSchema = z.enum([
 const stateSchema = z.enum(['Activo', 'Inactivo']);
 const normalizedRoleSchema = z.string().trim().pipe(roleSchema);
 const normalizedStateSchema = z.string().trim().pipe(stateSchema);
-const areaSchema = z.enum(['seleccion', 'formacion', 'administrador']);
+const areaSchema = z.enum(['seleccion', 'formacion', 'comercial', 'administrador']);
 const moduleAccessSchema = z.array(z.string().trim().min(1)).default([]);
 const getValidationMessage = (fallback: string) => (error: z.ZodError) =>
   error.issues[0]?.message || fallback;
