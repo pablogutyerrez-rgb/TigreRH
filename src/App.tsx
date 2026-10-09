@@ -1136,7 +1136,10 @@ export default function App() {
     session: TrainingSession | undefined,
     participantIds: string[],
   ): AttendanceRecord[] => {
-    const trainingDaysCount = session?.training_model === 'split_ojt'
+    const hasSeparateOjtPhase = session?.training_model === 'split_ojt' ||
+      Array.isArray(session?.formador_capacitacion_inicial_ids) ||
+      Array.isArray(session?.formador_ojt_ids);
+    const trainingDaysCount = hasSeparateOjtPhase
       ? (baseRecord.dia <= 5 ? 5 : 10)
       : getTrainingDaysCount(session);
     if (!isDropoutAttendance(baseRecord.estado_asistencia) || baseRecord.dia >= trainingDaysCount) return [];
