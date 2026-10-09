@@ -1136,7 +1136,9 @@ export default function App() {
     session: TrainingSession | undefined,
     participantIds: string[],
   ): AttendanceRecord[] => {
-    const trainingDaysCount = session?.training_model === 'split_ojt' && baseRecord.dia >= 6 ? 10 : getTrainingDaysCount(session);
+    const trainingDaysCount = session?.training_model === 'split_ojt'
+      ? (baseRecord.dia <= 5 ? 5 : 10)
+      : getTrainingDaysCount(session);
     if (!isDropoutAttendance(baseRecord.estado_asistencia) || baseRecord.dia >= trainingDaysCount) return [];
     const now = new Date().toISOString();
     const futureDays = Array.from({ length: trainingDaysCount - baseRecord.dia }, (_, index) => baseRecord.dia + index + 1);
