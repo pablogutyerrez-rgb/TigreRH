@@ -456,9 +456,9 @@ export default function Seleccion({ currentUser, users, initialView = 'dashboard
     return requisitions.filter((req) => {
       const term = search.toLowerCase();
       const matchesSearch =
-        req.nombre.toLowerCase().includes(term) ||
-        req.codigo.toLowerCase().includes(term) ||
-        req.cuenta.toLowerCase().includes(term) ||
+        String(req.nombre || '').toLowerCase().includes(term) ||
+        String(req.codigo || '').toLowerCase().includes(term) ||
+        String(req.cuenta || '').toLowerCase().includes(term) ||
         String(req.fuente_principal || '').toLowerCase().includes(term);
       const matchesStatus = statusFilter === 'Todos' || req.estado === statusFilter;
       const matchesCampaign = filterCampaign === 'Todos' || req.cuenta === filterCampaign;
@@ -489,7 +489,7 @@ export default function Seleccion({ currentUser, users, initialView = 'dashboard
     const contacted = scoped.filter((item) => item.fecha_primera_gestion || ['Interesado', 'No interesado', 'No responde'].includes(item.ultimo_estado)).length;
     const managed = contacted;
     const interested = scoped.filter((item) => item.ultimo_estado === 'Interesado').length;
-    const interviewed = scoped.filter((item) => item.entrevista === 'Realizada' || item.ultimo_estado.includes('Entrevista')).length;
+    const interviewed = scoped.filter((item) => item.entrevista === 'Realizada' || String(item.ultimo_estado || '').includes('Entrevista')).length;
     const evaluated = scoped.filter((item) => item.examen_teorico || item.pruebas_psic || item.entrevista_rh).length;
     const noApt = scoped.filter((item) => item.ultimo_estado === 'No apto').length;
     const dropped = scoped.filter((item) => ['No interesado', 'No responde', 'Caído'].includes(item.ultimo_estado)).length;
@@ -1207,7 +1207,7 @@ export default function Seleccion({ currentUser, users, initialView = 'dashboard
                       const assignedReqs = visibleReqs.filter((req) => req.reclutador_ids?.includes(recruiter.id));
                       const reqIds = new Set(assignedReqs.map((req) => req.id));
                       const mine = metrics.scoped.filter((item) => item.reclutador_id === recruiter.id || reqIds.has(item.requisition_id));
-                      const aptos = mine.filter((item) => item.ultimo_estado.includes('Apto') || item.training_session_id).length;
+                      const aptos = mine.filter((item) => String(item.ultimo_estado || '').includes('Apto') || item.training_session_id).length;
                       const required = assignedReqs.reduce((sum, req) => sum + Number(req.vacantes || 0), 0);
                       const coverage = percent(aptos, required);
                       return <tr key={recruiter.id}><td className="py-3 font-black text-slate-800">{recruiter.nombre}</td><td className="text-center">{mine.length}</td><td className="text-center">{aptos}</td><td className="text-center font-black">{coverage}%</td><td className="text-center"><span className={`px-2 py-1 rounded-full text-[10px] font-black ${coverage >= 80 ? 'bg-emerald-50 text-emerald-700' : coverage >= 50 ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'}`}>{coverage >= 80 ? 'En meta' : coverage >= 50 ? 'En avance' : 'En riesgo'}</span></td></tr>;
@@ -1697,7 +1697,7 @@ export default function Seleccion({ currentUser, users, initialView = 'dashboard
               <div className="flex items-start justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 rounded-2xl bg-gradient-to-r from-fuchsia-600 to-indigo-600 text-white flex items-center justify-center font-black">
-                    {detailApplicant.nombre_completo.slice(0, 2).toUpperCase()}
+                    {String(detailApplicant.nombre_completo || '').slice(0, 2).toUpperCase()}
                   </div>
                   <div>
                     <h3 className="font-black text-slate-900 text-xl">{detailApplicant.nombre_completo}</h3>

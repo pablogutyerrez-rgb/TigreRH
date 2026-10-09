@@ -134,6 +134,42 @@ const canViewRequisition = (req: AuthenticatedRequest, requisition: AnyDoc) => {
   return Array.isArray(requisition.reclutador_ids) && requisition.reclutador_ids.includes(req.user!.uid);
 };
 
+// Historical records were created before Seleccion required all display fields.
+// Normalize only the response so an incomplete legacy row cannot break the client render.
+const normalizeRequisitionResponse = (record: AnyDoc): AnyDoc => ({
+  ...record,
+  id: normalize(record.id),
+  codigo: normalize(record.codigo),
+  nombre: normalize(record.nombre || record.codigo || 'Sin nombre'),
+  cuenta: normalize(record.cuenta || record.campaña || record.campana),
+  posicion: normalize(record.posicion),
+  ciudad: normalize(record.ciudad),
+  fuente_principal: normalize(record.fuente_principal),
+  estado: normalize(record.estado || 'Activa'),
+  fecha_inicio: normalize(record.fecha_inicio),
+  fecha_fin: normalize(record.fecha_fin),
+  reclutador_ids: normalizeStringArray(record.reclutador_ids),
+  reclutador_nombres: normalizeStringArray(record.reclutador_nombres),
+});
+
+const normalizeApplicantResponse = (record: AnyDoc): AnyDoc => ({
+  ...record,
+  id: normalize(record.id),
+  requisition_id: normalize(record.requisition_id),
+  requisition_codigo: normalize(record.requisition_codigo),
+  cuenta: normalize(record.cuenta),
+  fuente: normalize(record.fuente),
+  posicion: normalize(record.posicion),
+  ciudad: normalize(record.ciudad),
+  dni: normalize(record.dni),
+  nombre_completo: normalize(record.nombre_completo || record.nombre || 'Sin nombre'),
+  telefono: normalize(record.telefono),
+  reclutador_id: normalize(record.reclutador_id),
+  reclutador_nombre: normalize(record.reclutador_nombre),
+  ultimo_estado: normalize(record.ultimo_estado || 'Pendiente de gestión'),
+  etapa_actual: normalize(record.etapa_actual || record.ultimo_estado || 'Pendiente de gestión'),
+});
+
 const getRequisition = async (id: string) => {
   const doc = await adminDb.collection(COLLECTIONS.requisitions).doc(id).get();
   return doc.exists ? ({ id: doc.id, ...doc.data() } as AnyDoc) : null;
@@ -287,7 +323,8 @@ router.get('/bootstrap', requireAuth, async (req: AuthenticatedRequest, res: Res
   const requisitions = allReqs.docs
     .map((doc) => ({ id: doc.id, ...doc.data() } as AnyDoc))
     .filter((item) => canViewRequisition(req, item))
-    .filter((item) => !item.deleted_at);
+    .filter((item) => !item.deleted_at)
+    .map(normalizeRequisitionResponse);
 
   const ids = new Set(requisitions.map((item) => String(item.id)));
   const applicantsSnapshot = await adminDb.collection(COLLECTIONS.applicants).get();
@@ -295,7 +332,8 @@ router.get('/bootstrap', requireAuth, async (req: AuthenticatedRequest, res: Res
     .map((doc) => ({ id: doc.id, ...doc.data() } as AnyDoc))
     .filter((item) => ids.has(String(item.requisition_id)))
     .filter((item) => !item.deleted_at)
-    .filter((item) => req.user!.rol !== 'Reclutador' || item.reclutador_id === req.user!.uid);
+    .filter((item) => req.user!.rol !== 'Reclutador' || item.reclutador_id === req.user!.uid)
+    .map(normalizeApplicantResponse);
 
   const audit = viewAllRoles.includes(req.user!.rol)
     ? (await adminDb.collection(COLLECTIONS.audit).orderBy('created_at', 'desc').limit(200).get())
