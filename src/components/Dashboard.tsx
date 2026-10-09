@@ -39,10 +39,6 @@ import {
   FileUp
 } from 'lucide-react';
 import { TrainingSession, Participant, AttendanceRecord, OperationConfirmation, AttendanceReopenRequest, User as AppUser } from '../types';
-import {
-  getTrainingTemporalStatus,
-  type TrainingTemporalStatus,
-} from '../utils/trainingMonthly';
 import { BPO_CAMPAIGNS } from '../constants/campaigns';
 import MonthlyTrainingView from './MonthlyTrainingView';
 import { getSessionTrainerIds, isSessionAssignedTrainer } from '../utils/trainingAssignments';
@@ -102,8 +98,6 @@ export default function Dashboard({
   const [filterFechaInicio, setFilterFechaInicio] = useState<string>('');
   const [filterFechaFin, setFilterFechaFin] = useState<string>('');
   const [filterMeses, setFilterMeses] = useState<string[]>([]);
-  const [filterAnios, setFilterAnios] = useState<string[]>([]);
-  const [filterEstado, setFilterEstado] = useState<'todos' | TrainingTemporalStatus>('todos');
   const [excludeExcludentes, setExcludeExcludentes] = useState(false);
   const [evidencePreview, setEvidencePreview] = useState<{ src: string; name: string } | null>(null);
 
@@ -138,7 +132,6 @@ export default function Dashboard({
     campañas: Array.from(new Set(roleScopedSessions.map((session) => session.campaña).filter(Boolean))).sort(),
     generaciones: Array.from(new Set(campaignScopedSessions.map((session) => session.generation_code || session.nombre_generacion).filter(Boolean))).sort(),
     meses: Array.from(new Set(campaignScopedSessions.map((session) => sessionStartDate(session).slice(5, 7)).filter(Boolean))).sort(),
-    anios: Array.from(new Set(campaignScopedSessions.map((session) => sessionStartDate(session).slice(0, 4)).filter(Boolean))).sort().reverse(),
   }), [roleScopedSessions, campaignScopedSessions]);
 
   const handleCampaignChange = (campaigns: string[]) => {
@@ -146,8 +139,6 @@ export default function Dashboard({
     setFilterFormador('todos');
     setFilterGeneracion('todos');
     setFilterMeses([]);
-    setFilterAnios([]);
-    setFilterEstado('todos');
   };
 
   // Reset Filters
@@ -158,8 +149,6 @@ export default function Dashboard({
     setFilterFechaInicio('');
     setFilterFechaFin('');
     setFilterMeses([]);
-    setFilterAnios([]);
-    setFilterEstado('todos');
     setExcludeExcludentes(false);
   };
 
@@ -173,13 +162,12 @@ export default function Dashboard({
       if (filterFechaInicio && startDate < filterFechaInicio) return false;
       if (filterFechaFin && startDate > filterFechaFin) return false;
       if (filterMeses.length > 0 && !filterMeses.includes(startDate.slice(5, 7))) return false;
-      if (filterAnios.length > 0 && !filterAnios.includes(startDate.slice(0, 4))) return false;
-      if (filterEstado !== 'todos' && getTrainingTemporalStatus(s) !== filterEstado) return false;
       return true;
     });
-  }, [roleScopedSessions, filterCampañas, filterFormador, filterGeneracion, filterFechaInicio, filterFechaFin, filterMeses, filterAnios, filterEstado]);
+  }, [roleScopedSessions, filterCampañas, filterFormador, filterGeneracion, filterFechaInicio, filterFechaFin, filterMeses]);
 
-  const filterMes = filterMeses.length === 1 && filterAnios.length === 1 ? `${filterAnios[0]}-${filterMeses[0]}` : '';
+  const filteredYears = Array.from(new Set(filteredSessions.map((session) => sessionStartDate(session).slice(0, 4)).filter(Boolean)));
+  const filterMes = filterMeses.length === 1 && filteredYears.length === 1 ? `${filteredYears[0]}-${filterMeses[0]}` : '';
 
   const filteredSessionIds = useMemo(() => new Set(filteredSessions.map(s => s.id)), [filteredSessions]);
   const excludentParticipantIds = useMemo(
@@ -370,7 +358,7 @@ export default function Dashboard({
   const d5VsProfileBajasData = useMemo(() => {
     return Array.from(new Set(filteredSessions.map((session) => session.campaña))).sort().map((campaign) => {
       const sessionIds = new Set(filteredSessions.filter((session) => session.campaña === campaign).map((session) => session.id));
-      const participantIds = new Set(filteredParticipants.filter((participant) => sessionIds.has(participant.training_session_id)).map((participant) => participant.id));
+      const participantIds = new Set<string>(filteredParticipants.filter((participant) => sessionIds.has(participant.training_session_id)).map((participant) => participant.id));
       const phase = calculatePhaseMetrics(participantIds, filteredAttendance, filteredConfirmations);
       const bajasD5 = new Set(filteredAttendance.filter((record) =>
         participantIds.has(record.participant_id) && record.dia === 5 &&
@@ -520,30 +508,25 @@ export default function Dashboard({
               />
             </div>
 
-            {/* Mes y año */}
+            {/* Meses */}
             <div>
               <label className="block text-xs font-medium text-slate-500 mb-1">Meses</label>
-              <select multiple
-                value={filterMeses}
-                onChange={(e) => setFilterMeses(Array.from(e.currentTarget.selectedOptions, (option) => option.value))}
-                className="w-full text-xs glass-input text-slate-700 rounded-lg p-2 outline-hidden"
-              >
-                {filterOptions.meses.map((monthValue) => <option key={monthValue} value={monthValue}>{new Intl.DateTimeFormat('es-PE', { month: 'long' }).format(new Date(2026, Number(monthValue) - 1, 1))}</option>)}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">Años</label>
-              <select multiple value={filterAnios} onChange={(e) => setFilterAnios(Array.from(e.currentTarget.selectedOptions, (option) => option.value))} className="w-full text-xs glass-input text-slate-700 rounded-lg p-2 outline-hidden">
-                {filterOptions.anios.map((year) => <option key={year} value={year}>{year}</option>)}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">Estado</label>
-              <select value={filterEstado} onChange={(e) => setFilterEstado(e.target.value as 'todos' | TrainingTemporalStatus)} className="w-full text-xs glass-input text-slate-700 rounded-lg p-2 outline-hidden">
-                <option value="todos">Todas</option><option value="proxima">Próximas</option><option value="en_curso">En curso</option><option value="finalizada">Finalizadas</option>
-              </select>
+              <details className="w-full rounded-lg">
+                <summary className="w-full cursor-pointer list-none glass-input text-slate-700 rounded-lg p-2 text-xs outline-hidden">
+                  {filterMeses.length === 0 ? 'Todos los meses' : `${filterMeses.length} mes(es) seleccionados`}
+                </summary>
+                <div className="mt-1 max-h-48 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 shadow-sm">
+                  {filterOptions.meses.map((monthValue) => {
+                    const selected = filterMeses.includes(monthValue);
+                    return (
+                      <label key={monthValue} className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-xs text-slate-700 hover:bg-indigo-50">
+                        <input type="checkbox" checked={selected} onChange={() => setFilterMeses((months) => selected ? months.filter((month) => month !== monthValue) : [...months, monthValue])} />
+                        {new Intl.DateTimeFormat('es-PE', { month: 'long' }).format(new Date(2026, Number(monthValue) - 1, 1))}
+                      </label>
+                    );
+                  })}
+                </div>
+              </details>
             </div>
 
             <div className="flex items-end">
