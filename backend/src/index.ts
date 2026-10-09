@@ -3,6 +3,7 @@ import cors from 'cors';
 import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { authRoutes } from './routes/authRoutes.js';
 import { bootstrapRoutes } from './routes/bootstrapRoutes.js';
@@ -17,7 +18,7 @@ import { rotationRoutes } from './routes/rotationRoutes.js';
 import { commercialRoutes } from './routes/commercialRoutes.js';
 import { userRoutes } from './routes/userRoutes.js';
 import { getPostgresPool } from './postgres.js';
-import { ensureHybridSchema } from './hybridDb.js';
+import { dataDb, ensureHybridSchema } from './hybridDb.js';
 import { requireAuth, type AuthenticatedRequest } from './utils/authMiddleware.js';
 
 const app = express();
@@ -98,6 +99,28 @@ app.get('/config.js', (_req, res) => {
     .type('application/javascript')
     .set('Cache-Control', 'no-store')
     .send(`window.__FDR_CONFIG__ = ${JSON.stringify(publicConfig)};`);
+});
+
+app.post('/api/client-errors', async (req, res) => {
+  const message = typeof req.body?.message === 'string' ? req.body.message.slice(0, 1_000) : '';
+  if (!message) {
+    res.status(400).json({ message: 'Diagnostico invalido.' });
+    return;
+  }
+
+  try {
+    await dataDb.collection('system_diagnostics').doc(`client-${randomUUID()}`).set({
+      kind: 'client_render_error',
+      message,
+      stack: typeof req.body?.stack === 'string' ? req.body.stack.slice(0, 8_000) : '',
+      path: typeof req.body?.path === 'string' ? req.body.path.slice(0, 500) : '',
+      created_at: new Date().toISOString(),
+    });
+    res.status(204).end();
+  } catch (error) {
+    console.error('Client diagnostic persistence failed:', error);
+    res.status(204).end();
+  }
 });
 
 app.use('/api/auth', authRoutes);
