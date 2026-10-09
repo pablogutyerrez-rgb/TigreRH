@@ -162,8 +162,13 @@ app.use((
 });
 
 if (frontendDistPath) {
-  app.use(express.static(frontendDistPath));
+  app.use(express.static(frontendDistPath, {
+    setHeaders(res, filePath) {
+      if (filePath.endsWith('index.html')) res.setHeader('Cache-Control', 'no-store, max-age=0');
+    },
+  }));
   app.get('*', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.sendFile(path.join(frontendDistPath, 'index.html'));
   });
 }

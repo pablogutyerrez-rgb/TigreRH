@@ -362,6 +362,7 @@ export default function App() {
   const [loginError, setLoginError] = useState('');
   const [authChecking, setAuthChecking] = useState(true);
   const [platformLoading, setPlatformLoading] = useState(false);
+  const [platformLoaded, setPlatformLoaded] = useState(false);
   const [platformError, setPlatformError] = useState('');
 
   // --- Navigation States ---
@@ -532,12 +533,14 @@ export default function App() {
 
         if (!firebaseUser) {
           setActiveUser(null);
+          setPlatformLoaded(false);
           setAuthChecking(false);
           return;
         }
 
         if (!profile) {
           setActiveUser(null);
+          setPlatformLoaded(false);
           setLoginError('No se pudo validar el perfil de la sesión. Vuelve a iniciar sesión.');
           setAuthChecking(false);
           return;
@@ -545,11 +548,13 @@ export default function App() {
 
         if (profile.estado !== 'Activo') {
           setActiveUser(null);
+          setPlatformLoaded(false);
           setLoginError('Usuario inactivo. Contacte al administrador.');
           setAuthChecking(false);
           return;
         }
 
+        setPlatformLoaded(false);
         setActiveUser(profile);
         setAuthChecking(false);
       });
@@ -572,6 +577,7 @@ export default function App() {
     const loadPlatformData = async () => {
       try {
         setPlatformLoading(true);
+        setPlatformLoaded(false);
         setPlatformError('');
         const data = await getBootstrapData();
         if (cancelled) return;
@@ -585,6 +591,7 @@ export default function App() {
         setLogs(data.logs);
         setSurveys(data.surveys);
         setResponses(data.responses);
+        setPlatformLoaded(true);
       } catch (error) {
         console.error('Error loading platform data:', error);
         if (!cancelled) {
@@ -2520,7 +2527,7 @@ export default function App() {
               )}
 
               {/* View 1: General Dashboard */}
-              {currentView === 'dashboard' && (permissions[activeUser.rol]?.canViewDashboard || userHasModuleAccess(activeUser, 'formacion', 'dashboard')) && (
+              {currentView === 'dashboard' && platformLoaded && !platformLoading && !platformError && (permissions[activeUser.rol]?.canViewDashboard || userHasModuleAccess(activeUser, 'formacion', 'dashboard')) && (
                 <Dashboard
                   sessions={sessions}
                   participants={participants}
