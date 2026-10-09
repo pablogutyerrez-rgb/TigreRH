@@ -60,15 +60,15 @@ interface DashboardProps {
   onViewDetail?: (sessionId: string) => void;
 }
 
-const normalizeAttendanceStatus = (status?: string) =>
-  (status || '')
+const normalizeAttendanceStatus = (status?: unknown) =>
+  String(status || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .trim();
 
-const isPresentAttendance = (status?: string) => ['asistio', 'tardanza'].includes(normalizeAttendanceStatus(status));
-const isDesertionAttendance = (status?: string) => ['desistio', 'baja'].includes(normalizeAttendanceStatus(status));
+const isPresentAttendance = (status?: unknown) => ['asistio', 'tardanza'].includes(normalizeAttendanceStatus(status));
+const isDesertionAttendance = (status?: unknown) => ['desistio', 'baja'].includes(normalizeAttendanceStatus(status));
 const EXCLUDENT_DESERTION_REASONS = new Set([
   'no se presento',
   'problemas personales',
@@ -346,7 +346,7 @@ export default function Dashboard({
         if (
           record.dia >= 2 &&
           record.dia <= 10 &&
-          isDesertionAttendance(record) &&
+          isDesertionAttendance(record.estado_asistencia) &&
           !firstDesertionByParticipant.has(record.participant_id)
         ) {
           firstDesertionByParticipant.set(record.participant_id, record);
