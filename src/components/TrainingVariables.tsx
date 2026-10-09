@@ -341,7 +341,6 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
         porcentaje_produccion_individual: calculation.porcentaje_produccion_individual,
         porcentaje_produccion_grupal: calculation.porcentaje_produccion_grupal,
         porcentaje_satisfaccion: calculation.porcentaje_satisfaccion,
-        porcentaje_rotacion: calculation.porcentaje_rotacion,
         calculo_automatico: true,
         calculo_detalle: calculation.detalle,
       }));
@@ -362,13 +361,14 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
       'Participantes Día 1': evaluation.calculo_detalle?.participantes_dia_1 ?? '',
       'Participantes Día final': evaluation.calculo_detalle?.participantes_dia_final ?? '',
       'Retención obtenida (%)': evaluation.porcentaje_retencion,
-      'Altas a operación': evaluation.calculo_detalle?.altas_operacion ?? '',
+      'Altas D10': evaluation.calculo_detalle?.altas_operacion ?? '',
       'Ventas reales OJT': evaluation.calculo_detalle?.ventas_reales ?? '',
       'Producción individual (%)': evaluation.porcentaje_produccion_individual,
       'Producción grupal (%)': evaluation.porcentaje_produccion_grupal,
       'Respuestas de encuesta': evaluation.calculo_detalle?.respuestas_encuesta ?? '',
       'Satisfacción (%)': evaluation.porcentaje_satisfaccion,
-      'Administrativo / Rotación (%)': evaluation.formula_version === 2 ? evaluation.porcentaje_rotacion : evaluation.porcentaje_administrativo,
+      'Cumplimiento administrativo (%)': evaluation.porcentaje_administrativo,
+      'Rotación manual (%)': evaluation.porcentaje_rotacion ?? '',
       'Cumplimiento total (%)': evaluation.cumplimiento_total,
       'Comisión total': evaluation.comision_total,
       Estado: evaluation.estado,
@@ -387,13 +387,12 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
     if (!form.id_formador) return 'Selecciona un formador.';
     if (currentFormula && previewResult.error) return previewResult.error;
     if (currentFormula && form.calculo_automatico && form.calculo_detalle?.productividad_disponible === false) return 'No hay altas a operación para calcular Productividad OJT.';
-    if (currentFormula && form.calculo_automatico && form.calculo_detalle?.rotacion_disponible === false) return 'No hay dotación cargada para calcular rotación.';
     if (form.porcentaje_retencion < 0 || form.porcentaje_retencion > 100) return 'La retención debe estar entre 0% y 100%.';
     if (form.porcentaje_produccion_individual < 0 || form.porcentaje_produccion_individual > 100) return 'La producción individual debe estar entre 0% y 100%.';
     if (form.porcentaje_produccion_grupal < 0) return 'La producción grupal debe ser igual o mayor a 0%.';
     if (form.porcentaje_satisfaccion < 0 || form.porcentaje_satisfaccion > 100) return 'La satisfacción debe estar entre 0% y 100%.';
     if (form.porcentaje_administrativo < 0 || form.porcentaje_administrativo > 100) return 'El cumplimiento administrativo debe estar entre 0% y 100%.';
-    if (!currentFormula && form.porcentaje_administrativo < 100 && !form.observacion_administrativa?.trim()) {
+    if (form.porcentaje_administrativo < 100 && !form.observacion_administrativa?.trim()) {
       return 'El sustento administrativo es obligatorio cuando la calificación es menor a 100%.';
     }
     const duplicate = evaluations.some((evaluation) =>
@@ -729,7 +728,7 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                     <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs md:grid-cols-5">
                       <ReadMetric label="Día 1" value={String(form.calculo_detalle.participantes_dia_1)} />
                       <ReadMetric label="Día final" value={String(form.calculo_detalle.participantes_dia_final)} />
-                      <ReadMetric label="Altas a operación" value={String(form.calculo_detalle.altas_operacion ?? 0)} />
+                      <ReadMetric label="Altas D10" value={String(form.calculo_detalle.altas_operacion ?? 0)} />
                       <ReadMetric label="Ventas reales OJT" value={String(form.calculo_detalle.ventas_reales ?? 0)} />
                       <ReadMetric label="Encuestas" value={String(form.calculo_detalle.respuestas_encuesta)} />
                     </div>
@@ -738,12 +737,12 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
 
                 <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <KpiCard
-                    title={currentFormula ? "Retención total (D1–D10)" : "Retención a operación"}
+                    title={currentFormula ? "Retención promedio de formación y OJT" : "Retención a operación"}
                     weight="Peso 30%"
                     meta={currentFormula ? "Meta 50%" : "Meta 70%"}
                     guide={{
                       measures: 'Mide la capacidad del formador para lograr que los participantes culminen la capacitación y pasen a operación.',
-                      input: currentFormula ? 'Altas efectivas a operación divididas entre participantes iniciales del Día 1. Meta 50%.' : 'Ingresa el porcentaje mensual de retención obtenido. La meta de referencia es 70%; si el valor supera 70%, genera sobrecumplimiento.',
+                      input: currentFormula ? 'Promedio de Retención Capacitación Inicial y Retención OJT del Dashboard de Formación. Meta 50%.' : 'Ingresa el porcentaje mensual de retención obtenido. La meta de referencia es 70%; si el valor supera 70%, genera sobrecumplimiento.',
                     }}
                   >
                     <PercentInput label="Retención obtenida" value={form.porcentaje_retencion} disabled={isReadOnly} onChange={(value) => updateForm('porcentaje_retencion', value)} />
@@ -756,7 +755,7 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                     meta="Meta grupal 100%"
                     guide={{
                       measures: 'Mide el desempeño productivo durante OJT según el resultado mensual definido por el coordinador.',
-                      input: currentFormula ? 'Ventas reales OJT divididas entre altas a operación de las capacitaciones seleccionadas. Meta 100%.' : 'Ingresa dos porcentajes: el individual solo sirve como referencia; el grupal se compara con la meta de 100% y calcula el aporte ponderado del KPI.',
+                      input: currentFormula ? 'Ventas reales del módulo Prospectos, según la meta por campaña, divididas entre altas D10. Meta 100%.' : 'Ingresa dos porcentajes: el individual solo sirve como referencia; el grupal se compara con la meta de 100% y calcula el aporte ponderado del KPI.',
                     }}
                   >
                     {!currentFormula && <PercentInput label="Cumplimiento individual" value={form.porcentaje_produccion_individual} disabled={isReadOnly} onChange={(value) => updateForm('porcentaje_produccion_individual', value)} />}
@@ -779,17 +778,18 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                     <ReadMetric label="Aporte" value={`${preview.aporte_satisfaccion.toFixed(2)} puntos`} />
                   </KpiCard>
                   <KpiCard
-                    title={currentFormula ? "Rotación" : "Cumplimiento administrativo"}
+                    title="Cumplimiento administrativo"
                     weight="Peso 10%"
-                    meta={currentFormula ? "Meta 10% · Ingreso manual" : "Calificación manual"}
+                    meta="Meta 100%"
                     guide={{
-                      measures: currentFormula ? 'Rotación calculada con bajas y dotación cargadas.' : 'Mide el cumplimiento de responsabilidades operativas y administrativas del formador durante el mes.',
-                      input: currentFormula ? '10% obtiene 10 puntos; por debajo disminuye proporcionalmente. Por encima requiere definición.' : 'Ingresa una calificación manual de 0% a 100%. Si es menor a 100%, debes registrar el sustento u observación.',
+                      measures: 'Mide el cumplimiento de responsabilidades operativas y administrativas del formador durante el mes.',
+                      input: 'La rotación es manual y no suma puntos. Hasta 10% no descuenta; por encima reduce 20% de la comisión calculada.',
                     }}
                   >
-                    {currentFormula ? <ReadMetric label="Rotación calculada" value={form.calculo_automatico && form.calculo_detalle?.rotacion_disponible === false ? 'Sin datos' : percent(form.porcentaje_rotacion ?? 0)} /> : <PercentInput label="Cumplimiento administrativo" value={form.porcentaje_administrativo} disabled={isReadOnly} onChange={(value) => updateForm('porcentaje_administrativo', value)} />}
+                    <PercentInput label="Cumplimiento administrativo" value={form.porcentaje_administrativo} disabled={isReadOnly} onChange={(value) => updateForm('porcentaje_administrativo', value)} />
+                    <PercentInput label="Rotación (manual)" value={form.porcentaje_rotacion ?? 0} disabled={isReadOnly} onChange={(value) => updateForm('porcentaje_rotacion', value)} />
                     <label className="space-y-1 block">
-                      <span className={labelClass}>Sustento {!currentFormula && form.porcentaje_administrativo < 100 ? '*' : ''}</span>
+                      <span className={labelClass}>Sustento {form.porcentaje_administrativo < 100 ? '*' : ''}</span>
                       <textarea disabled={isReadOnly} value={form.observacion_administrativa || ''} onChange={(event) => updateForm('observacion_administrativa', event.target.value)} rows={3} className={inputClass} />
                     </label>
                     <ReadMetric label="Aporte" value={`${preview.aporte_administrativo.toFixed(2)} puntos`} />
@@ -805,7 +805,7 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                     <ReadMetric label="Aporte retención" value={`${preview.aporte_retencion.toFixed(2)} pts`} />
                     <ReadMetric label="Aporte producción" value={`${preview.aporte_produccion.toFixed(2)} pts`} />
                     <ReadMetric label="Aporte satisfacción" value={`${preview.aporte_satisfaccion.toFixed(2)} pts`} />
-                    <ReadMetric label={currentFormula ? "Aporte rotación" : "Aporte administrativo"} value={`${preview.aporte_administrativo.toFixed(2)} pts`} />
+                    <ReadMetric label="Aporte administrativo" value={`${preview.aporte_administrativo.toFixed(2)} pts`} />
                   </div>
                   <div className={`mt-5 rounded-2xl border p-4 ${scoreBadge(preview.cumplimiento_total)}`}>
                     <p className="text-xs font-black uppercase tracking-wide">Cumplimiento total</p>

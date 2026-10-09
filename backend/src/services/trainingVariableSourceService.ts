@@ -1,6 +1,5 @@
 import { calculatePhaseMetrics } from './trainingPhaseMetrics.js';
 import { dataDb as adminDb } from '../hybridDb.js';
-import { getRotationRateForEvaluation } from './rotationService.js';
 
 type StoredRecord = Record<string, unknown> & { id: string };
 
@@ -133,26 +132,27 @@ export const calculateTrainingVariableFromSources = async (
   const selectedIds = Array.from(new Set(generationIds.map(normalizeText).filter(Boolean)));
   if (!selectedIds.length) throw new Error('Selecciona una capacitación para calcular la variable.');
 
-  const [sessions, participants, attendance, surveys, responses, confirmations] = await Promise.all([
+  const [sessions, participants, attendance, surveys, responses, confirmations, prospects] = await Promise.all([
     readCollection('sessions'),
     readCollection('participants'),
     readCollection('attendance'),
     readCollection('surveys'),
     readCollection('responses'),
     readCollection('confirmations'),
+    readCollection('prospects'),
   ]);
 
-  return calculateTrainingVariableFromData(trainerId, selectedIds, year, month, { sessions, participants, attendance, surveys, responses, confirmations }, filters);
+  return calculateTrainingVariableFromData(trainerId, selectedIds, year, month, { sessions, participants, attendance, surveys, responses, confirmations, prospects }, filters);
 };
 
 export const calculateTrainingVariableFromData = async (
   trainerId: string, generationIds: string[], year: number, month: number,
-  data: { sessions: StoredRecord[]; participants: StoredRecord[]; attendance: StoredRecord[]; surveys: StoredRecord[]; responses: StoredRecord[]; confirmations: StoredRecord[]; rotation?: { disponible: boolean; porcentaje: number | null; bajas: number; dotacion: number } },
+  data: { sessions: StoredRecord[]; participants: StoredRecord[]; attendance: StoredRecord[]; surveys: StoredRecord[]; responses: StoredRecord[]; confirmations: StoredRecord[]; prospects?: StoredRecord[]; rotation?: { disponible: boolean; porcentaje: number | null; bajas: number; dotacion: number } },
   filters?: { meses?: number[]; formador_ids?: string[]; campanas?: string[] },
 ): Promise<AutomaticTrainingVariableResult> => {
   const selectedIds = [...new Set(generationIds)];
   if (!selectedIds.length) throw new Error('Selecciona al menos una capacitación.');
-  const { sessions, participants, attendance, surveys, responses, confirmations } = data;
+  const { sessions, participants, attendance, surveys, responses } = data;
   const sessionById = new Map(sessions.map((session) => [session.id, session]));
   const selectedSessions = selectedIds.map((id) => sessionById.get(id));
   if (selectedSessions.some((session) => !session)) throw new Error('Uno de los códigos seleccionados ya no existe.');
@@ -169,7 +169,6 @@ export const calculateTrainingVariableFromData = async (
   const selectedIdSet = new Set(selectedIds);
   const selectedCodes = validSessions.map((session) => sourceFromSession(session).codigo);
   const selectedParticipants = participants.filter((participant) => selectedIdSet.has(normalizeText(participant.training_session_id)));
-  const selectedParticipantIds = new Set(selectedParticipants.map((participant) => participant.id));
   const selectedAttendance = attendance.filter((record) => selectedIdSet.has(normalizeText(record.training_session_id)));
 
   if (filters?.campanas?.length && validSessions.some((session) =>
@@ -184,12 +183,14 @@ export const calculateTrainingVariableFromData = async (
   ));
   const dayOneCount = phases.reduce((sum, phase) => sum + phase.d1Ids.size, 0);
   const finalDayCount = phases.reduce((sum, phase) => sum + phase.d10Ids.size, 0);
-  const altasOperacion = new Set([
-    ...confirmations
-      .filter((record) => selectedParticipantIds.has(normalizeText(record.participant_id)) && !record.isDeleted && normalizeText(record.estado_alta) === 'Alta confirmada')
-      .map((record) => normalizeText(record.participant_id)),
-  ].filter(Boolean));
-  const retention = dayOneCount > 0 ? altasOperacion.size / dayOneCount * 100 : 0;
+  const initialTraining = phases.reduce((sum, phase) => sum + phase.d2Ids.size, 0);
+  const finalTraining = phases.reduce((sum, phase) => sum + phase.d5Ids.size, 0);
+  const initialOjt = phases.reduce((sum, phase) => sum + phase.d6Ids.size, 0);
+  const finalOjt = phases.reduce((sum, phase) => sum + phase.d10Ids.size, 0);
+  const retentionTraining = initialTraining > 0 ? finalTraining / initialTraining * 100 : 0;
+  const retentionOjt = initialOjt > 0 ? finalOjt / initialOjt * 100 : 0;
+  const retention = (retentionTraining + retentionOjt) / 2;
+  const altasOperacion = new Set(phases.flatMap((phase) => [...phase.altasD10Ids]));
   const sessionCampaigns = new Map(validSessions.map((session) => [session.id, productivityCampaign(session.campana || session['campaña'])]));
   const participantById = new Map(selectedParticipants.map((participant) => [participant.id, participant]));
   const altaMetaByCampaign = { ruc10: 0, culqi: 0 };
@@ -200,17 +201,24 @@ export const calculateTrainingVariableFromData = async (
   });
   const altasProductividad = altaMetaByCampaign.ruc10 + altaMetaByCampaign.culqi;
   const metaVentas = altaMetaByCampaign.ruc10 * 2 + altaMetaByCampaign.culqi;
-  const salesParticipants = selectedParticipants.filter((participant) =>
-    Boolean(sessionCampaigns.get(normalizeText(participant.training_session_id))),
-  );
-  const ventasRegistradas = salesParticipants.filter((participant) =>
-    participant.ventas_ojt !== undefined && participant.ventas_ojt !== null && participant.ventas_ojt !== '',
-  );
-  const ventasReales = ventasRegistradas.reduce((total, participant) => {
-    const ventas = Number(participant.ventas_ojt);
-    return total + (Number.isFinite(ventas) && ventas > 0 ? ventas : 0);
+  const prospectSales = [...new Map((data.prospects || [])
+    .filter((prospect) => normalizeText(prospect.estado) === 'Venta / Alta')
+    .filter((prospect) => {
+      const sessionId = normalizeText(prospect.training_session_id);
+      const sessionCode = normalizeText(prospect.training_session_code);
+      return selectedIdSet.has(sessionId) || selectedCodes.includes(sessionCode);
+    })
+    .filter((prospect) => {
+      const session = sessionById.get(normalizeText(prospect.training_session_id))
+        || validSessions.find((candidate) => sourceFromSession(candidate).codigo === normalizeText(prospect.training_session_code));
+      return Boolean(session && sessionCampaigns.get(session.id));
+    })
+    .map((prospect) => [prospect.id, prospect])).values()];
+  const ventasReales = prospectSales.reduce((total, prospect) => {
+    const quantity = Number(prospect.cantidad_productos);
+    return total + (Number.isFinite(quantity) && quantity > 0 ? quantity : 1);
   }, 0);
-  const productivityAvailable = metaVentas > 0 && salesParticipants.length > 0 && ventasRegistradas.length === salesParticipants.length;
+  const productivityAvailable = metaVentas > 0;
   const production = productivityAvailable ? Math.min(100, ventasReales / metaVentas * 100) : 0;
 
   const selectedSurveyIds = new Set(
@@ -229,11 +237,7 @@ export const calculateTrainingVariableFromData = async (
     ? satisfactionScores.reduce((sum, value) => sum + value, 0) / satisfactionScores.length
     : 0;
 
-  const rotation = data.rotation || await getRotationRateForEvaluation({
-    campaigns: filters?.campanas?.length ? filters.campanas : validSessions.map((session) => normalizeText(session.campana || session['campaña'])),
-    year,
-    months: filters?.meses?.length ? filters.meses : [month],
-  });
+  const rotation = data.rotation || { disponible: false, porcentaje: null, bajas: 0, dotacion: 0 };
 
   return {
     generation_ids: selectedIds,

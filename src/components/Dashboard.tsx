@@ -228,7 +228,7 @@ export default function Dashboard({
       asistieronDia6: phase.d6Ids.size,
       asistieronDia10: phase.d10Ids.size,
       desercionesFinales: phase.desercionesFinales,
-      altasConfirmadas: phase.confirmedAltaIds.size,
+      altasConfirmadas: phase.altasD10Ids.size,
       ojtParticipantIds: phase.ojtParticipantIds,
       pendientesAlta,
       aptos,
@@ -277,7 +277,7 @@ export default function Dashboard({
         'Asist. Día 1': phase.d1Ids.size,
         'Cierre Capacitación': phase.d5Ids.size,
         'Cierre OJT': phase.d10Ids.size,
-        Altas: phase.confirmedAltaIds.size,
+        Altas: phase.altasD10Ids.size,
         'Retención Capacitación %': phase.retencionCapacitacion,
         'Retención OJT %': phase.retencionOjt,
         'Deserción Final %': phase.desercionFinalRate,
@@ -300,7 +300,7 @@ export default function Dashboard({
         Asignados: tParts.length,
         'Cierre Capacitación': phase.d5Ids.size,
         'Cierre OJT': phase.d10Ids.size,
-        Altas: phase.confirmedAltaIds.size,
+        Altas: phase.altasD10Ids.size,
         'Efectividad %': phase.retencionOjt,
       };
     });
@@ -416,7 +416,7 @@ export default function Dashboard({
       const phase = calculatePhaseMetrics(sessionPartIds, filteredAttendance, filteredConfirmations);
       bucket['Cierre Capacitación'] += phase.d5Ids.size;
       bucket['Cierre OJT'] += phase.d10Ids.size;
-      bucket.Altas += phase.confirmedAltaIds.size;
+      bucket.Altas += phase.altasD10Ids.size;
     });
 
     return Array.from(weekBuckets.values())

@@ -1,4 +1,5 @@
 const isPresentAttendance = (status?: string) => ['asistio', 'tardanza'].includes((status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim());
+const isAttendedAttendance = (status?: string) => (status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim() === 'asistio';
 
 export const calculatePhaseMetrics = (
   participantIds: Set<string>,
@@ -9,9 +10,12 @@ export const calculatePhaseMetrics = (
     [1, 2, 5, 6, 10].map((day) => [day, new Set<string>()]),
   );
   const ojtParticipantIds = new Set<string>();
+  const altasD10Ids = new Set<string>();
 
   attendanceRecords.forEach((record) => {
-    if (!participantIds.has(record.participant_id) || !isPresentAttendance(record.estado_asistencia)) return;
+    if (!participantIds.has(record.participant_id)) return;
+    if (record.dia === 10 && isAttendedAttendance(record.estado_asistencia)) altasD10Ids.add(record.participant_id);
+    if (!isPresentAttendance(record.estado_asistencia)) return;
     attendantsByDay.get(record.dia)?.add(record.participant_id);
     if (record.dia >= 6 && record.dia <= 10) ojtParticipantIds.add(record.participant_id);
   });
@@ -38,6 +42,7 @@ export const calculatePhaseMetrics = (
     d6Ids,
     d10Ids,
     ojtParticipantIds,
+    altasD10Ids,
     confirmedAltaIds,
     retencionCapacitacion: d2Ids.size > 0 ? Math.round((d5Ids.size / d2Ids.size) * 100) : 0,
     retencionOjt: d6Ids.size > 0 ? Math.round((d10Ids.size / d6Ids.size) * 100) : 0,
@@ -45,4 +50,3 @@ export const calculatePhaseMetrics = (
     desercionFinalRate: d2Ids.size > 0 ? Math.round((desercionesFinales / d2Ids.size) * 100) : 0,
   };
 };
-

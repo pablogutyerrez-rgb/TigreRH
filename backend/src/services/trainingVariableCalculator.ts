@@ -81,8 +81,8 @@ export const calculateTrainingVariableEvaluation = (input: TrainingVariableCalcu
 };
 
 const calculateCurrentVariable = (input: TrainingVariableCalculationInput) => {
-  const rotation = input.porcentaje_rotacion;
-  const values = [input.porcentaje_retencion, input.porcentaje_produccion_grupal, input.porcentaje_satisfaccion];
+  const rotation = input.porcentaje_rotacion ?? 0;
+  const values = [input.porcentaje_retencion, input.porcentaje_produccion_grupal, input.porcentaje_satisfaccion, input.porcentaje_administrativo];
   if (values.some((value) => !Number.isFinite(value) || value < 0 || value > 100)) {
     throw new Error('Los resultados deben estar entre 0 y 100%.');
   }
@@ -92,16 +92,19 @@ const calculateCurrentVariable = (input: TrainingVariableCalculationInput) => {
   const retention = Math.min(10000, divideRound(toBasisPoints(input.porcentaje_retencion) * 10000, 5000));
   const satisfaction = Math.min(10000, divideRound(toBasisPoints(input.porcentaje_satisfaccion) * 10000, 9000));
   const r = divideRound(retention * 3000, 10000);
-  const p = divideRound(toBasisPoints(input.porcentaje_produccion_grupal) * 5000, 10000);
+  const p = divideRound(Math.min(10000, toBasisPoints(input.porcentaje_produccion_grupal)) * 5000, 10000);
   const s = divideRound(satisfaction * 1000, 10000);
-  const rotationPoints = toBasisPoints(Math.min(rotation, 10));
-  const total = r + p + s + rotationPoints;
+  const administrative = Math.min(10000, toBasisPoints(input.porcentaje_administrativo));
+  const a = divideRound(administrative * 1000, 10000);
+  const total = r + p + s + a;
+  const commissionBeforeRotation = total < 9000 ? 0 : moneyFromCents(Math.min(30000, divideRound(30000 * total, 10000)));
+  const commission = rotation > 10 ? Math.round(commissionBeforeRotation * 80) / 100 : commissionBeforeRotation;
   return {
     cumplimiento_retencion: fromBasisPoints(retention), aporte_retencion: fromBasisPoints(r),
     aporte_produccion: fromBasisPoints(p), cumplimiento_satisfaccion: fromBasisPoints(s),
-    aporte_satisfaccion: fromBasisPoints(s), aporte_administrativo: fromBasisPoints(rotationPoints),
+    aporte_satisfaccion: fromBasisPoints(s), aporte_administrativo: fromBasisPoints(a),
     cumplimiento_total: fromBasisPoints(total), comision_base: 300,
     bloques_sobrecumplimiento: 0, bono_sobrecumplimiento: 0,
-    comision_total: total < 9000 ? 0 : moneyFromCents(Math.min(30000, divideRound(30000 * total, 10000))),
+    comision_total: commission,
   };
 };
