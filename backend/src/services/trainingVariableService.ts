@@ -50,6 +50,8 @@ export interface TrainingVariableEvaluation extends TrainingVariableInput {
   comision_base: number;
   bloques_sobrecumplimiento: number;
   bono_sobrecumplimiento: number;
+  comision_aplicable?: number;
+  descuento_rotacion?: number;
   comision_total: number;
   usuario_creacion: string;
   usuario_modificacion: string;

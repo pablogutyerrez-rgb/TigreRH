@@ -13,14 +13,33 @@ import type { TrainingSession, Participant, AttendanceRecord, Prospect } from '.
 
 const input = { formula_version: 2, porcentaje_retencion: 50, porcentaje_produccion_individual: 100,
   porcentaje_produccion_grupal: 100, porcentaje_satisfaccion: 90, porcentaje_administrativo: 100, porcentaje_rotacion: 10 };
+const currentCalculation = (overrides: Partial<typeof input> = {}) => {
+  const result = backend({ ...input, ...overrides });
+  assert.ok('comision_aplicable' in result && 'descuento_rotacion' in result);
+  return result;
+};
 test('nueva formula, candado, limites y paridad con servidor', () => {
-  assert.equal(backend(input).comision_total, 300);
+  assert.equal(currentCalculation().comision_total, 300);
+  assert.equal(currentCalculation().comision_aplicable, 300);
+  assert.equal(currentCalculation().descuento_rotacion, 0);
   assert.equal(backend({ ...input, porcentaje_produccion_grupal: 80 }).cumplimiento_total, 90);
   assert.equal(backend({ ...input, porcentaje_produccion_grupal: 80 }).comision_total, 270);
   assert.equal(backend({ ...input, porcentaje_produccion_grupal: 79.98 }).comision_total, 0);
   assert.equal(backend({ ...input, porcentaje_rotacion: 5 }).aporte_administrativo, 10);
   assert.equal(backend({ ...input, porcentaje_retencion: 100, porcentaje_satisfaccion: 100 }).comision_total, 300);
   assert.equal(backend({ ...input, porcentaje_rotacion: 10.1 }).comision_total, 240);
+  for (const [rotation, discount, commission] of [[0, 0, 300], [10, 0, 300], [10.01, 60, 240], [20, 60, 240]] as const) {
+    const result = currentCalculation({ porcentaje_rotacion: rotation });
+    assert.equal(result.comision_aplicable, 300);
+    assert.equal(result.descuento_rotacion, discount);
+    assert.equal(result.comision_total, commission);
+    assert.ok(result.comision_total >= 0 && result.comision_total <= 300);
+  }
+  const blocked = currentCalculation({ porcentaje_produccion_grupal: 79.98, porcentaje_rotacion: 20 });
+  assert.equal(blocked.comision_aplicable, 0);
+  assert.equal(blocked.descuento_rotacion, 0);
+  assert.equal(blocked.comision_total, 0);
+  assert.equal(backend(input).aporte_retencion + backend(input).aporte_produccion + backend(input).aporte_satisfaccion + backend(input).aporte_administrativo, 100);
   for (const rotation of [0, 1.25, 5, 10, 10.1]) assert.deepEqual(backend({ ...input, porcentaje_rotacion: rotation }), preview({ ...input, porcentaje_rotacion: rotation }));
 });
 const data = {

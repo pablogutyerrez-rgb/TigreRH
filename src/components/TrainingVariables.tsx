@@ -820,8 +820,14 @@ export default function TrainingVariables({ currentUser, users }: TrainingVariab
                     <ReadMetric label="Comisión base" value={money(preview.comision_base)} />
                     <ReadMetric label="Bloques de sobrecumplimiento" value={String(preview.bloques_sobrecumplimiento)} />
                     <ReadMetric label="Bono adicional" value={money(preview.bono_sobrecumplimiento)} />
+                    {currentFormula && (
+                      <>
+                        <ReadMetric label="Comisión aplicable" value={money(preview.comision_aplicable ?? preview.comision_total)} />
+                        <ReadMetric label="Descuento por rotación" value={money(preview.descuento_rotacion ?? 0)} />
+                      </>
+                    )}
                     <div className="flex justify-between rounded-xl bg-white p-3 font-black text-slate-950">
-                      <span>Comisión total</span>
+                      <span>{currentFormula ? 'Comisión final' : 'Comisión total'}</span>
                       <span>{money(preview.comision_total)}</span>
                     </div>
                   </div>

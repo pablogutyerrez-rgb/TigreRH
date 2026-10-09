@@ -141,6 +141,41 @@ const TrainerMultiSelect = ({
   </div>
 );
 
+const FilterMultiSelect = ({
+  label,
+  options,
+  selected,
+  onChange,
+  allLabel,
+}: {
+  label: string;
+  options: Array<{ value: string; label: string }>;
+  selected: string[];
+  onChange: (values: string[]) => void;
+  allLabel: string;
+}) => (
+  <details className="w-full rounded-xl border border-slate-200 bg-white">
+    <summary className="cursor-pointer list-none px-3 py-2.5 text-sm text-slate-700">
+      {selected.length === 0 ? allLabel : `${label}: ${selected.length}`}
+    </summary>
+    <div className="max-h-52 space-y-1 overflow-y-auto border-t border-slate-200 p-2">
+      {options.map((option) => (
+        <label key={option.value} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-slate-700 hover:bg-indigo-50">
+          <input
+            type="checkbox"
+            checked={selected.includes(option.value)}
+            onChange={() => onChange(selected.includes(option.value)
+              ? selected.filter((value) => value !== option.value)
+              : [...selected, option.value])}
+            className="h-4 w-4 accent-indigo-600"
+          />
+          <span className="truncate">{option.label}</span>
+        </label>
+      ))}
+    </div>
+  </details>
+);
+
 export default function Capacitaciones({
   sessions,
   ojtModules = [],
@@ -165,15 +200,14 @@ export default function Capacitaciones({
 }: CapacitacionesProps) {
   const [view, setView] = useState<'list' | 'create'>('list');
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterCampaña, setFilterCampaña] = useState('todos');
-  const [filterEstado, setFilterEstado] = useState('todos');
+  const [filterCampañas, setFilterCampañas] = useState<string[]>([]);
+  const [filterEstados, setFilterEstados] = useState<string[]>([]);
   const [filterDesde, setFilterDesde] = useState('');
   const [filterHasta, setFilterHasta] = useState('');
-  const [filterFormador, setFilterFormador] = useState('todos');
+  const [filterFormadores, setFilterFormadores] = useState<string[]>([]);
   const [filterMes, setFilterMes] = useState<string[]>([]);
-  const [filterAnio, setFilterAnio] = useState<string[]>([]);
-  const [filterGeneracion, setFilterGeneracion] = useState('todos');
-  const [filterEtapa, setFilterEtapa] = useState<'todas' | 'initial' | 'ojt'>('todas');
+  const [filterGeneraciones, setFilterGeneraciones] = useState<string[]>([]);
+  const [filterEtapas, setFilterEtapas] = useState<Array<'initial' | 'ojt'>>([]);
   const [assigningOjtId, setAssigningOjtId] = useState<string | null>(null);
   const [editingOjtId, setEditingOjtId] = useState<string | null>(null);
   const [ojtName, setOjtName] = useState('');
@@ -1346,43 +1380,43 @@ export default function Capacitaciones({
         s.campaña.toLowerCase().includes(searchTerm.toLowerCase()) ||
         s.formador_nombre.toLowerCase().includes(searchTerm.toLowerCase());
 
-      const matchesCampaña = filterCampaña === 'todos' || s.campaña === filterCampaña;
-      const matchesEstado = filterEstado === 'todos' || s.estado === filterEstado;
+      const matchesCampaña = filterCampañas.length === 0 || filterCampañas.includes(s.campaña);
+      const matchesEstado = filterEstados.length === 0 || filterEstados.includes(s.estado);
       const startDate = sessionStartDate(s);
       const matchesFecha = (!filterDesde || startDate >= filterDesde) && (!filterHasta || startDate <= filterHasta);
-      const matchesFormador = filterFormador === 'todos' || getSessionTrainerIds(s).includes(filterFormador);
+      const matchesFormador = filterFormadores.length === 0 || getSessionTrainerIds(s).some((id) => filterFormadores.includes(id));
       const matchesMes = filterMes.length === 0 || filterMes.includes(startDate.slice(5, 7));
-      const matchesAnio = filterAnio.length === 0 || filterAnio.includes(startDate.slice(0, 4));
-      const matchesGeneracion = filterGeneracion === 'todos' || identifier === filterGeneracion;
+      const matchesGeneracion = filterGeneraciones.length === 0 || filterGeneraciones.includes(identifier);
 
       // If user is a Formador, they can only see their own assigned sessions (this is double guarded here)
       const matchesRoleAccess =
         currentUser.rol !== 'Formador' || isSessionAssignedTrainer(s, currentUser.id);
 
-      return matchesSearch && matchesCampaña && matchesEstado && matchesFecha && matchesFormador && matchesMes && matchesAnio && matchesGeneracion && matchesRoleAccess;
+      return matchesSearch && matchesCampaña && matchesEstado && matchesFecha && matchesFormador && matchesMes && matchesGeneracion && matchesRoleAccess;
     });
-  }, [sessions, searchTerm, filterCampaña, filterEstado, filterDesde, filterHasta, filterFormador, filterMes, filterAnio, filterGeneracion, currentUser]);
+  }, [sessions, searchTerm, filterCampañas, filterEstados, filterDesde, filterHasta, filterFormadores, filterMes, filterGeneraciones, currentUser]);
 
   const matchesOjtSession = (module: OjtModule, id: string) => sessions.some((session) =>
       session.id === id &&
       (currentUser.rol !== 'Formador' || isSessionAssignedTrainer(session, currentUser.id)) &&
-      (filterCampaña === 'todos' || session.campaña === filterCampaña) &&
-      (filterFormador === 'todos' || getSessionTrainerIds(session).includes(filterFormador)) &&
+      (filterCampañas.length === 0 || filterCampañas.includes(session.campaña)) &&
+      (filterFormadores.length === 0 || getSessionTrainerIds(session).some((trainerId) => filterFormadores.includes(trainerId))) &&
       (filterMes.length === 0 || filterMes.includes(String(module.fecha_inicio || '').slice(5, 7))) &&
-      (filterAnio.length === 0 || filterAnio.includes(String(module.fecha_inicio || '').slice(0, 4))) &&
       (!filterDesde || String(module.fecha_inicio || '') >= filterDesde) &&
       (!filterHasta || String(module.fecha_inicio || '') <= filterHasta) &&
-      (filterGeneracion === 'todos' || getTrainingIdentifier(session) === filterGeneracion) &&
+      (filterGeneraciones.length === 0 || filterGeneraciones.includes(getTrainingIdentifier(session))) &&
       (!searchTerm || [module.nombre, session.nombre_generacion, session.campaña, session.formador_nombre]
         .some((value) => value.toLowerCase().includes(searchTerm.toLowerCase()))));
   const visibleOjtModules = ojtModules.filter((module) =>
     module.generation_ids.some((id) => matchesOjtSession(module, id)) &&
-    (filterEstado === 'todos' || module.estado === filterEstado),
+    (filterEstados.length === 0 || filterEstados.includes(module.estado)),
   );
 
   const downloadInformation = () => {
-    const modules = filterEtapa === 'initial' ? [] : visibleOjtModules;
-    const selectedIds = new Set(filterEtapa === 'ojt' ? [] : filteredSessions.map((session) => session.id));
+    const showInitial = filterEtapas.length === 0 || filterEtapas.includes('initial');
+    const showOjt = filterEtapas.length === 0 || filterEtapas.includes('ojt');
+    const modules = showOjt ? visibleOjtModules : [];
+    const selectedIds = new Set(showInitial ? filteredSessions.map((session) => session.id) : []);
     modules.forEach((module) => module.generation_ids.forEach((id) => {
       if (matchesOjtSession(module, id)) selectedIds.add(id);
     }));
@@ -1439,7 +1473,7 @@ export default function Capacitaciones({
         <>
           {/* Filters Grid */}
           <div className="glass-card rounded-2xl p-5">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-4">
               <div className="relative">
                 <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
                 <input
@@ -1451,42 +1485,11 @@ export default function Capacitaciones({
                 />
               </div>
 
-              <div>
-                <select
-                  value={filterCampaña}
-                  onChange={(e) => setFilterCampaña(e.target.value)}
-                  className="w-full glass-input text-slate-700 rounded-xl px-3 py-2.5 text-sm outline-hidden"
-                >
-                  <option value="todos">Todas las Campañas</option>
-                  {BPO_CAMPAIGNS.map((item) => <option key={item} value={item}>{item}</option>)}
-                </select>
-              </div>
-
-              <select value={filterGeneracion} onChange={(event) => setFilterGeneracion(event.target.value)} aria-label="Generación" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm">
-                <option value="todos">Todas las generaciones</option>
-                {Array.from(new Set(sessions.map(getTrainingIdentifier))).sort().map((code) => <option key={code} value={code}>{code}</option>)}
-              </select>
-
-              <div>
-                <select
-                  value={filterEstado}
-                  onChange={(e) => setFilterEstado(e.target.value)}
-                  className="w-full glass-input text-slate-700 rounded-xl px-3 py-2.5 text-sm outline-hidden"
-                >
-                  <option value="todos">Todos los Estados</option>
-                  <option value="Pendiente de inicio">Pendiente de inicio</option>
-                  <option value="En curso">En curso</option>
-                  <option value="Activa">Activa</option>
-                  <option value="Capacitación cerrada">Capacitación cerrada</option>
-                  <option value="Campaña cerrada">Campaña cerrada</option>
-                  <option value="Abierto">OJT abierto</option>
-                  <option value="Cerrado">OJT cerrado</option>
-                </select>
-              </div>
-
-              <div className="text-right flex items-center justify-end text-xs text-slate-500">
-                Mostrando {filteredSessions.length} capacitaciones
-              </div>
+              <FilterMultiSelect label="Campañas" allLabel="Todas las Campañas" selected={filterCampañas} onChange={setFilterCampañas} options={BPO_CAMPAIGNS.map((item) => ({ value: item, label: item }))} />
+              <FilterMultiSelect label="Generaciones" allLabel="Todas las generaciones" selected={filterGeneraciones} onChange={setFilterGeneraciones} options={Array.from(new Set(sessions.map(getTrainingIdentifier))).sort().map((code) => ({ value: code, label: code }))} />
+              <FilterMultiSelect label="Estados" allLabel="Todos los Estados" selected={filterEstados} onChange={setFilterEstados} options={[
+                'Pendiente de inicio', 'En curso', 'Activa', 'Capacitación cerrada', 'Campaña cerrada', 'Abierto', 'Cerrado',
+              ].map((item) => ({ value: item, label: item === 'Abierto' ? 'OJT abierto' : item === 'Cerrado' ? 'OJT cerrado' : item }))} />
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
                 <label className="min-w-0 flex-1 text-xs text-slate-500">Desde
                   <input type="date" value={filterDesde} max={filterHasta || undefined} onChange={(event) => setFilterDesde(event.target.value)} aria-label="Desde" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm" />
@@ -1495,25 +1498,19 @@ export default function Capacitaciones({
                   <input type="date" value={filterHasta} min={filterDesde || undefined} onChange={(event) => setFilterHasta(event.target.value)} aria-label="Hasta" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm" />
                 </label>
               </div>
-              <select value={filterFormador} onChange={(event) => setFilterFormador(event.target.value)} aria-label="Formador" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm">
-                <option value="todos">Todos los formadores</option>
-                {trainers.map((trainer) => <option key={trainer.id} value={trainer.id}>{trainer.nombre}</option>)}
-              </select>
-              <select multiple value={filterMes} onChange={(event) => setFilterMes(Array.from(event.currentTarget.selectedOptions, (option) => option.value))} aria-label="Meses" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm">
-                {Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, '0')).map((month, index) => <option key={month} value={month}>{new Intl.DateTimeFormat('es-PE', { month: 'long' }).format(new Date(2026, index, 1))}</option>)}
-              </select>
-              <select multiple value={filterAnio} onChange={(event) => setFilterAnio(Array.from(event.currentTarget.selectedOptions, (option) => option.value))} aria-label="Años" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm">
-                {Array.from(new Set(sessions.map((session) => sessionStartDate(session).slice(0, 4)).filter(Boolean))).sort().reverse().map((year) => <option key={year} value={year}>{year}</option>)}
-              </select>
-              <select value={filterEtapa} onChange={(event) => setFilterEtapa(event.target.value as typeof filterEtapa)} aria-label="Etapa" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm">
-                <option value="todas">Todas las etapas</option>
-                <option value="initial">Capacitación Inicial</option>
-                <option value="ojt">OJT</option>
-              </select>
+              <FilterMultiSelect label="Formadores" allLabel="Todos los formadores" selected={filterFormadores} onChange={setFilterFormadores} options={trainers.map((trainer) => ({ value: trainer.id, label: trainer.nombre }))} />
+              <FilterMultiSelect label="Meses" allLabel="Todos los meses" selected={filterMes} onChange={setFilterMes} options={Array.from({ length: 12 }, (_, index) => ({ value: String(index + 1).padStart(2, '0'), label: new Intl.DateTimeFormat('es-PE', { month: 'long' }).format(new Date(2026, index, 1)) }))} />
+              <FilterMultiSelect label="Etapas" allLabel="Todas las etapas" selected={filterEtapas} onChange={(values) => setFilterEtapas(values.filter((value): value is 'initial' | 'ojt' => value === 'initial' || value === 'ojt'))} options={[
+                { value: 'initial', label: 'Capacitación Inicial' },
+                { value: 'ojt', label: 'OJT' },
+              ]} />
+              <div className="flex items-center justify-end text-xs text-slate-500">
+                Mostrando {filteredSessions.length} capacitaciones
+              </div>
             </div>
           </div>
 
-          {filterEtapa !== 'initial' && visibleOjtModules.length > 0 && (
+          {(filterEtapas.length === 0 || filterEtapas.includes('ojt')) && visibleOjtModules.length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {visibleOjtModules.map((module) => (
                 <div key={module.id} className="glass-card rounded-2xl p-5 space-y-2 text-xs text-slate-600">
@@ -1560,7 +1557,7 @@ export default function Capacitaciones({
           )}
 
           {/* Sessions Listing */}
-          {filterEtapa !== 'ojt' && filteredSessions.length === 0 ? (
+          {(filterEtapas.length === 0 || filterEtapas.includes('initial')) && filteredSessions.length === 0 ? (
             <div className="glass-card rounded-2xl p-12 text-center">
               <div className="max-w-md mx-auto space-y-3">
                 <div className="bg-slate-500/10 text-slate-500 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto backdrop-blur-xs">
@@ -1572,7 +1569,7 @@ export default function Capacitaciones({
                 </p>
               </div>
             </div>
-          ) : filterEtapa !== 'ojt' && (
+          ) : (filterEtapas.length === 0 || filterEtapas.includes('initial')) && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredSessions.map((session) => {
                 // Count participants for this session

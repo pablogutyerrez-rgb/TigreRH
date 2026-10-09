@@ -97,14 +97,17 @@ const calculateCurrentVariable = (input: TrainingVariableCalculationInput) => {
   const administrative = Math.min(10000, toBasisPoints(input.porcentaje_administrativo));
   const a = divideRound(administrative * 1000, 10000);
   const total = r + p + s + a;
-  const commissionBeforeRotation = total < 9000 ? 0 : moneyFromCents(Math.min(30000, divideRound(30000 * total, 10000)));
-  const commission = rotation > 10 ? Math.round(commissionBeforeRotation * 80) / 100 : commissionBeforeRotation;
+  const commissionApplicable = total < 9000 ? 0 : moneyFromCents(Math.min(30000, divideRound(30000 * total, 10000)));
+  const rotationDiscount = rotation > 10 ? moneyFromCents(Math.round(commissionApplicable * 20)) : 0;
+  const commission = moneyFromCents(Math.round((commissionApplicable - rotationDiscount) * 100));
   return {
     cumplimiento_retencion: fromBasisPoints(retention), aporte_retencion: fromBasisPoints(r),
     aporte_produccion: fromBasisPoints(p), cumplimiento_satisfaccion: fromBasisPoints(s),
     aporte_satisfaccion: fromBasisPoints(s), aporte_administrativo: fromBasisPoints(a),
     cumplimiento_total: fromBasisPoints(total), comision_base: 300,
     bloques_sobrecumplimiento: 0, bono_sobrecumplimiento: 0,
+    comision_aplicable: commissionApplicable,
+    descuento_rotacion: rotationDiscount,
     comision_total: commission,
   };
 };
