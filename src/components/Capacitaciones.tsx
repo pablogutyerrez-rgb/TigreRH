@@ -96,6 +96,7 @@ const DEMO_CSV_TEMPLATES = [
 const getTrainingIdentifier = (
   session?: Pick<TrainingSession, 'generation_code' | 'nombre_generacion'>,
 ) => session?.generation_code?.trim() || session?.nombre_generacion?.trim() || 'Sin código';
+const sessionStartDate = (session: Pick<TrainingSession, 'fecha_inicio'>) => String(session.fecha_inicio || '');
 
 const TrainerMultiSelect = ({
   label,
@@ -1347,10 +1348,11 @@ export default function Capacitaciones({
 
       const matchesCampaña = filterCampaña === 'todos' || s.campaña === filterCampaña;
       const matchesEstado = filterEstado === 'todos' || s.estado === filterEstado;
-      const matchesFecha = (!filterDesde || s.fecha_inicio >= filterDesde) && (!filterHasta || s.fecha_inicio <= filterHasta);
+      const startDate = sessionStartDate(s);
+      const matchesFecha = (!filterDesde || startDate >= filterDesde) && (!filterHasta || startDate <= filterHasta);
       const matchesFormador = filterFormador === 'todos' || getSessionTrainerIds(s).includes(filterFormador);
-      const matchesMes = filterMes.length === 0 || filterMes.includes(s.fecha_inicio.slice(5, 7));
-      const matchesAnio = filterAnio.length === 0 || filterAnio.includes(s.fecha_inicio.slice(0, 4));
+      const matchesMes = filterMes.length === 0 || filterMes.includes(startDate.slice(5, 7));
+      const matchesAnio = filterAnio.length === 0 || filterAnio.includes(startDate.slice(0, 4));
       const matchesGeneracion = filterGeneracion === 'todos' || identifier === filterGeneracion;
 
       // If user is a Formador, they can only see their own assigned sessions (this is double guarded here)
@@ -1366,10 +1368,10 @@ export default function Capacitaciones({
       (currentUser.rol !== 'Formador' || isSessionAssignedTrainer(session, currentUser.id)) &&
       (filterCampaña === 'todos' || session.campaña === filterCampaña) &&
       (filterFormador === 'todos' || getSessionTrainerIds(session).includes(filterFormador)) &&
-      (filterMes.length === 0 || filterMes.includes(module.fecha_inicio.slice(5, 7))) &&
-      (filterAnio.length === 0 || filterAnio.includes(module.fecha_inicio.slice(0, 4))) &&
-      (!filterDesde || module.fecha_inicio >= filterDesde) &&
-      (!filterHasta || module.fecha_inicio <= filterHasta) &&
+      (filterMes.length === 0 || filterMes.includes(String(module.fecha_inicio || '').slice(5, 7))) &&
+      (filterAnio.length === 0 || filterAnio.includes(String(module.fecha_inicio || '').slice(0, 4))) &&
+      (!filterDesde || String(module.fecha_inicio || '') >= filterDesde) &&
+      (!filterHasta || String(module.fecha_inicio || '') <= filterHasta) &&
       (filterGeneracion === 'todos' || getTrainingIdentifier(session) === filterGeneracion) &&
       (!searchTerm || [module.nombre, session.nombre_generacion, session.campaña, session.formador_nombre]
         .some((value) => value.toLowerCase().includes(searchTerm.toLowerCase()))));
@@ -1501,7 +1503,7 @@ export default function Capacitaciones({
                 {Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, '0')).map((month, index) => <option key={month} value={month}>{new Intl.DateTimeFormat('es-PE', { month: 'long' }).format(new Date(2026, index, 1))}</option>)}
               </select>
               <select multiple value={filterAnio} onChange={(event) => setFilterAnio(Array.from(event.currentTarget.selectedOptions, (option) => option.value))} aria-label="Años" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm">
-                {Array.from(new Set(sessions.map((session) => session.fecha_inicio.slice(0, 4)))).sort().reverse().map((year) => <option key={year} value={year}>{year}</option>)}
+                {Array.from(new Set(sessions.map((session) => sessionStartDate(session).slice(0, 4)).filter(Boolean))).sort().reverse().map((year) => <option key={year} value={year}>{year}</option>)}
               </select>
               <select value={filterEtapa} onChange={(event) => setFilterEtapa(event.target.value as typeof filterEtapa)} aria-label="Etapa" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm">
                 <option value="todas">Todas las etapas</option>

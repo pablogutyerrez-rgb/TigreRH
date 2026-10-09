@@ -82,6 +82,7 @@ const EXCLUDENT_DESERTION_REASONS = new Set([
 const isExcludentDesertion = (record: AttendanceRecord) =>
   normalizeAttendanceStatus(record.estado_asistencia) === 'desistio' &&
   EXCLUDENT_DESERTION_REASONS.has(normalizeAttendanceStatus(record.motivo_desercion));
+const sessionStartDate = (session: Pick<TrainingSession, 'fecha_inicio'>) => String(session.fecha_inicio || '');
 
 
 export default function Dashboard({
@@ -136,8 +137,8 @@ export default function Dashboard({
   const filterOptions = useMemo(() => ({
     campañas: Array.from(new Set(roleScopedSessions.map((session) => session.campaña).filter(Boolean))).sort(),
     generaciones: Array.from(new Set(campaignScopedSessions.map((session) => session.generation_code || session.nombre_generacion).filter(Boolean))).sort(),
-    meses: Array.from(new Set(campaignScopedSessions.map((session) => session.fecha_inicio.slice(5, 7)).filter(Boolean))).sort(),
-    anios: Array.from(new Set(campaignScopedSessions.map((session) => session.fecha_inicio.slice(0, 4)).filter(Boolean))).sort().reverse(),
+    meses: Array.from(new Set(campaignScopedSessions.map((session) => sessionStartDate(session).slice(5, 7)).filter(Boolean))).sort(),
+    anios: Array.from(new Set(campaignScopedSessions.map((session) => sessionStartDate(session).slice(0, 4)).filter(Boolean))).sort().reverse(),
   }), [roleScopedSessions, campaignScopedSessions]);
 
   const handleCampaignChange = (campaigns: string[]) => {
@@ -168,10 +169,11 @@ export default function Dashboard({
       if (filterCampañas.length > 0 && !filterCampañas.includes(s.campaña)) return false;
       if (filterFormador !== 'todos' && !getSessionTrainerIds(s).includes(filterFormador)) return false;
       if (filterGeneracion !== 'todos' && (s.generation_code || s.nombre_generacion) !== filterGeneracion) return false;
-      if (filterFechaInicio && s.fecha_inicio < filterFechaInicio) return false;
-      if (filterFechaFin && s.fecha_inicio > filterFechaFin) return false;
-      if (filterMeses.length > 0 && !filterMeses.includes(s.fecha_inicio.slice(5, 7))) return false;
-      if (filterAnios.length > 0 && !filterAnios.includes(s.fecha_inicio.slice(0, 4))) return false;
+      const startDate = sessionStartDate(s);
+      if (filterFechaInicio && startDate < filterFechaInicio) return false;
+      if (filterFechaFin && startDate > filterFechaFin) return false;
+      if (filterMeses.length > 0 && !filterMeses.includes(startDate.slice(5, 7))) return false;
+      if (filterAnios.length > 0 && !filterAnios.includes(startDate.slice(0, 4))) return false;
       if (filterEstado !== 'todos' && getTrainingTemporalStatus(s) !== filterEstado) return false;
       return true;
     });
