@@ -40,9 +40,7 @@ import {
 } from 'lucide-react';
 import { TrainingSession, Participant, AttendanceRecord, OperationConfirmation, AttendanceReopenRequest, User as AppUser } from '../types';
 import {
-  getSessionActivityMonths,
   getTrainingTemporalStatus,
-  sessionHasActivityInMonth,
   type TrainingTemporalStatus,
 } from '../utils/trainingMonthly';
 import { BPO_CAMPAIGNS } from '../constants/campaigns';
@@ -72,10 +70,12 @@ const normalizeAttendanceStatus = (status?: string) =>
 const isPresentAttendance = (status?: string) => ['asistio', 'tardanza'].includes(normalizeAttendanceStatus(status));
 const isDesertionAttendance = (status?: string) => ['desistio', 'baja'].includes(normalizeAttendanceStatus(status));
 const EXCLUDENT_DESERTION_REASONS = new Set([
+  'no se presento',
   'problemas personales',
   'abandono durante capacitacion',
   'no acepta condiciones',
   'otra propuesta laboral',
+  'problemas de horario',
   'problemas de salud',
   'desistimiento voluntario',
 ]);
@@ -100,7 +100,8 @@ export default function Dashboard({
   const [filterGeneracion, setFilterGeneracion] = useState<string>('todos');
   const [filterFechaInicio, setFilterFechaInicio] = useState<string>('');
   const [filterFechaFin, setFilterFechaFin] = useState<string>('');
-  const [filterMes, setFilterMes] = useState<string>('');
+  const [filterMeses, setFilterMeses] = useState<string[]>([]);
+  const [filterAnios, setFilterAnios] = useState<string[]>([]);
   const [filterEstado, setFilterEstado] = useState<'todos' | TrainingTemporalStatus>('todos');
   const [excludeExcludentes, setExcludeExcludentes] = useState(false);
   const [evidencePreview, setEvidencePreview] = useState<{ src: string; name: string } | null>(null);
@@ -135,16 +136,16 @@ export default function Dashboard({
   const filterOptions = useMemo(() => ({
     campañas: Array.from(new Set(roleScopedSessions.map((session) => session.campaña).filter(Boolean))).sort(),
     generaciones: Array.from(new Set(campaignScopedSessions.map((session) => session.generation_code || session.nombre_generacion).filter(Boolean))).sort(),
-    meses: Array.from(new Set(
-      campaignScopedSessions.flatMap(getSessionActivityMonths),
-    )).sort().reverse(),
+    meses: Array.from(new Set(campaignScopedSessions.map((session) => session.fecha_inicio.slice(5, 7)).filter(Boolean))).sort(),
+    anios: Array.from(new Set(campaignScopedSessions.map((session) => session.fecha_inicio.slice(0, 4)).filter(Boolean))).sort().reverse(),
   }), [roleScopedSessions, campaignScopedSessions]);
 
   const handleCampaignChange = (campaigns: string[]) => {
     setFilterCampañas(campaigns);
     setFilterFormador('todos');
     setFilterGeneracion('todos');
-    setFilterMes('');
+    setFilterMeses([]);
+    setFilterAnios([]);
     setFilterEstado('todos');
   };
 
@@ -155,7 +156,8 @@ export default function Dashboard({
     setFilterGeneracion('todos');
     setFilterFechaInicio('');
     setFilterFechaFin('');
-    setFilterMes('');
+    setFilterMeses([]);
+    setFilterAnios([]);
     setFilterEstado('todos');
     setExcludeExcludentes(false);
   };
@@ -166,18 +168,21 @@ export default function Dashboard({
       if (filterCampañas.length > 0 && !filterCampañas.includes(s.campaña)) return false;
       if (filterFormador !== 'todos' && !getSessionTrainerIds(s).includes(filterFormador)) return false;
       if (filterGeneracion !== 'todos' && (s.generation_code || s.nombre_generacion) !== filterGeneracion) return false;
-      if (filterFechaInicio && (s.fecha_fin || s.fecha_inicio) < filterFechaInicio) return false;
+      if (filterFechaInicio && s.fecha_inicio < filterFechaInicio) return false;
       if (filterFechaFin && s.fecha_inicio > filterFechaFin) return false;
-      if (filterMes && !sessionHasActivityInMonth(s, filterMes)) return false;
-      if (filterMes && filterEstado !== 'todos' && getTrainingTemporalStatus(s) !== filterEstado) return false;
+      if (filterMeses.length > 0 && !filterMeses.includes(s.fecha_inicio.slice(5, 7))) return false;
+      if (filterAnios.length > 0 && !filterAnios.includes(s.fecha_inicio.slice(0, 4))) return false;
+      if (filterEstado !== 'todos' && getTrainingTemporalStatus(s) !== filterEstado) return false;
       return true;
     });
-  }, [roleScopedSessions, filterCampañas, filterFormador, filterGeneracion, filterFechaInicio, filterFechaFin, filterMes, filterEstado]);
+  }, [roleScopedSessions, filterCampañas, filterFormador, filterGeneracion, filterFechaInicio, filterFechaFin, filterMeses, filterAnios, filterEstado]);
+
+  const filterMes = filterMeses.length === 1 && filterAnios.length === 1 ? `${filterAnios[0]}-${filterMeses[0]}` : '';
 
   const filteredSessionIds = useMemo(() => new Set(filteredSessions.map(s => s.id)), [filteredSessions]);
   const excludentParticipantIds = useMemo(
-    () => new Set(attendance.filter(isExcludentDesertion).map((record) => record.participant_id)),
-    [attendance],
+    () => new Set(attendance.filter((record) => filteredSessionIds.has(record.training_session_id) && isExcludentDesertion(record)).map((record) => record.participant_id)),
+    [attendance, filteredSessionIds],
   );
   // Filtered Participants
   const filteredParticipants = useMemo(() => {
@@ -332,21 +337,21 @@ export default function Dashboard({
 
   const desercionesPorMotivo = useMemo(() => {
     const motivosCounts: { [key: string]: number } = {};
-    const firstExcludentDesertionByParticipant = new Map<string, AttendanceRecord>();
+    const firstDesertionByParticipant = new Map<string, AttendanceRecord>();
     [...filteredAttendance]
       .sort((a, b) => a.dia - b.dia)
       .forEach((record) => {
         if (
           record.dia >= 2 &&
           record.dia <= 10 &&
-          isExcludentDesertion(record) &&
-          !firstExcludentDesertionByParticipant.has(record.participant_id)
+          isDesertionAttendance(record) &&
+          !firstDesertionByParticipant.has(record.participant_id)
         ) {
-          firstExcludentDesertionByParticipant.set(record.participant_id, record);
+          firstDesertionByParticipant.set(record.participant_id, record);
         }
       });
 
-    firstExcludentDesertionByParticipant.forEach((record) => {
+    firstDesertionByParticipant.forEach((record) => {
       const motivo = record.motivo_desercion || 'Sin motivo especificado';
       motivosCounts[motivo] = (motivosCounts[motivo] || 0) + 1;
     });
@@ -359,6 +364,20 @@ export default function Dashboard({
       color: colors[index % colors.length]
     })).sort((a, b) => b.value - a.value);
   }, [filteredAttendance]);
+
+  const d5VsProfileBajasData = useMemo(() => {
+    return Array.from(new Set(filteredSessions.map((session) => session.campaña))).sort().map((campaign) => {
+      const sessionIds = new Set(filteredSessions.filter((session) => session.campaña === campaign).map((session) => session.id));
+      const participantIds = new Set(filteredParticipants.filter((participant) => sessionIds.has(participant.training_session_id)).map((participant) => participant.id));
+      const phase = calculatePhaseMetrics(participantIds, filteredAttendance, filteredConfirmations);
+      const bajasD5 = new Set(filteredAttendance.filter((record) =>
+        participantIds.has(record.participant_id) && record.dia === 5 &&
+        normalizeAttendanceStatus(record.estado_asistencia) === 'desistio' &&
+        normalizeAttendanceStatus(record.motivo_desercion) === 'no cumple con el perfil',
+      ).map((record) => record.participant_id));
+      return { name: campaign, 'Asistentes D5': phase.d5Ids.size, 'Bajas D5 perfil': bajasD5.size };
+    });
+  }, [filteredSessions, filteredParticipants, filteredAttendance, filteredConfirmations]);
 
   const desercionesPorMotivoTotal = useMemo(
     () => desercionesPorMotivo.reduce((sum, item) => sum + item.value, 0),
@@ -499,42 +518,31 @@ export default function Dashboard({
               />
             </div>
 
-            {/* Mes */}
+            {/* Mes y año */}
             <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">Ver por mes</label>
-              <select
-                value={filterMes}
-                onChange={(e) => setFilterMes(e.target.value)}
+              <label className="block text-xs font-medium text-slate-500 mb-1">Meses</label>
+              <select multiple
+                value={filterMeses}
+                onChange={(e) => setFilterMeses(Array.from(e.currentTarget.selectedOptions, (option) => option.value))}
                 className="w-full text-xs glass-input text-slate-700 rounded-lg p-2 outline-hidden"
               >
-                <option value="">Todos los meses</option>
-                {filterOptions.meses.map((monthValue) => {
-                  const [year, month] = monthValue.split('-').map(Number);
-                  const label = new Intl.DateTimeFormat('es-PE', {
-                    month: 'long',
-                    year: 'numeric',
-                    timeZone: 'UTC',
-                  }).format(new Date(Date.UTC(year, month - 1, 1)));
-                  return <option key={monthValue} value={monthValue}>{label}</option>;
-                })}
+                {filterOptions.meses.map((monthValue) => <option key={monthValue} value={monthValue}>{new Intl.DateTimeFormat('es-PE', { month: 'long' }).format(new Date(2026, Number(monthValue) - 1, 1))}</option>)}
               </select>
             </div>
 
-            {filterMes && (
-              <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1">Estado</label>
-                <select
-                  value={filterEstado}
-                  onChange={(e) => setFilterEstado(e.target.value as 'todos' | TrainingTemporalStatus)}
-                  className="w-full text-xs glass-input text-slate-700 rounded-lg p-2 outline-hidden"
-                >
-                  <option value="todos">Todas</option>
-                  <option value="proxima">Próximas</option>
-                  <option value="en_curso">En curso</option>
-                  <option value="finalizada">Finalizadas</option>
-                </select>
-              </div>
-            )}
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Años</label>
+              <select multiple value={filterAnios} onChange={(e) => setFilterAnios(Array.from(e.currentTarget.selectedOptions, (option) => option.value))} className="w-full text-xs glass-input text-slate-700 rounded-lg p-2 outline-hidden">
+                {filterOptions.anios.map((year) => <option key={year} value={year}>{year}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Estado</label>
+              <select value={filterEstado} onChange={(e) => setFilterEstado(e.target.value as 'todos' | TrainingTemporalStatus)} className="w-full text-xs glass-input text-slate-700 rounded-lg p-2 outline-hidden">
+                <option value="todos">Todas</option><option value="proxima">Próximas</option><option value="en_curso">En curso</option><option value="finalizada">Finalizadas</option>
+              </select>
+            </div>
 
             <div className="flex items-end">
               <button
@@ -574,7 +582,7 @@ export default function Dashboard({
       )}
 
       {/* KPI Cards Grid */}
-      {!filterMes && (
+      {(
       <>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4" id="kpi-grid">
         {/* Card 1 */}
@@ -600,7 +608,7 @@ export default function Dashboard({
               <p className="text-slate-400 font-medium text-xs uppercase tracking-wider">Retención Capacitación</p>
               <h3 className="text-slate-900 text-3xl font-black mt-1">{metrics.retencionCapacitacion}%</h3>
               <p className="text-xs text-emerald-600 font-medium mt-1">
-                {metrics.asistieronDia5} de {metrics.asistieronDia2} llegaron al Día 5
+                {metrics.asistieronDia5} de {metrics.asistieronDia1} llegaron al Día 5
               </p>
             </div>
             <div className="bg-cyan-50 rounded-xl p-2.5 text-cyan-600 border border-cyan-100">
@@ -650,7 +658,7 @@ export default function Dashboard({
             <div>
               <p className="text-slate-400 font-medium text-xs uppercase tracking-wider">Altas</p>
               <h3 className="text-slate-900 text-3xl font-black mt-1">{metrics.altasConfirmadas}</h3>
-              <p className="text-xs text-emerald-600 font-medium mt-1">Postulantes que llegaron al Día 10</p>
+              <p className="text-xs text-emerald-600 font-medium mt-1">Postulantes únicos con Asistió en Día 10</p>
             </div>
             <div className="bg-emerald-50 rounded-xl p-2.5 text-emerald-600 border border-emerald-100">
               <UserCheck className="w-5 h-5" />
@@ -750,40 +758,8 @@ export default function Dashboard({
       </div>
 
       {/* Charts Panel Row 2 */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Comparativo por Formador */}
-        <div className="glass-card flex flex-col p-5 rounded-2xl lg:col-span-2">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-slate-800 font-bold text-base flex items-center gap-1.5">
-              <UserCheck className="text-violet-600 w-4.5 h-4.5" />
-              Comparativo por Formador FDR
-            </h3>
-            <span className="text-slate-400 text-xs font-mono">Efectividad</span>
-          </div>
-          <div className="flex-1 min-h-[300px]">
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={formadorData} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} />
-                <YAxis stroke="#94a3b8" fontSize={11} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px' }}
-                />
-                <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                <Bar dataKey="Asignados" fill="#a78bfa" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Cierre Capacitación" fill="#34d399" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Cierre OJT" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Altas" fill="#f43f5e" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="mt-2 text-center text-xs text-slate-500">
-            Compara la efectividad de los formadores en llevar participantes al alta final.
-          </div>
-        </div>
-
-        {/* Deserciones por Motivo */}
-        <div className="glass-card flex flex-col p-5 rounded-2xl lg:col-span-1">
+      <div className="grid grid-cols-1 gap-6">
+        <div className="glass-card flex flex-col p-5 rounded-2xl">
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-slate-800 font-bold text-base flex items-center gap-1.5">
               <UserX className="text-rose-500 w-4.5 h-4.5" />
@@ -821,7 +797,7 @@ export default function Dashboard({
           </div>
           {desercionesPorMotivo.length > 0 && (
             <div className="mt-2 space-y-1.5 max-h-[120px] overflow-y-auto pr-1">
-              {desercionesPorMotivo.slice(0, 4).map((item, idx) => (
+              {desercionesPorMotivo.map((item, idx) => (
                 <div key={idx} className="flex justify-between items-center text-xs text-slate-600">
                   <div className="flex items-center gap-1.5 truncate">
                     <span className="w-2.5 h-2.5 rounded-full inline-block shrink-0" style={{ backgroundColor: item.color }}></span>
@@ -959,45 +935,32 @@ export default function Dashboard({
         </div>
       </div>
 
-      {/* Trend Analysis Graph */}
+      {/* Comparativo D5 */}
       <div className="glass-card flex flex-col p-5 rounded-2xl">
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-slate-800 font-bold text-base flex items-center gap-1.5">
             <Layers className="text-blue-600 w-4.5 h-4.5" />
-            Evolución de Capacitación FDR (Semanal)
+            Asistentes D5 vs. Bajas D5 por Perfil
           </h3>
-          <span className="text-slate-400 text-xs font-mono">Tendencias</span>
+          <span className="text-slate-400 text-xs font-mono">Por campaña</span>
         </div>
         <div className="min-h-[220px]">
-          {evolutionData.length === 0 ? (
+          {d5VsProfileBajasData.length === 0 ? (
             <div className="h-[220px] flex flex-col items-center justify-center text-center text-slate-400">
               <Layers className="w-8 h-8 mb-2 text-slate-300" />
-              <p className="text-sm font-medium">Sin datos de evolución todavía</p>
-              <p className="text-[11px] mt-1">Las tendencias aparecerán cuando existan capacitaciones y altas registradas.</p>
+              <p className="text-sm font-medium">Sin datos de asistencia D5 todavía</p>
             </div>
           ) : (
             <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={evolutionData} margin={{ top: 10, right: 20, left: -20, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="colorCargados" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2}/>
-                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
-                  </linearGradient>
-                  <linearGradient id="colorAltas" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#ec4899" stopOpacity={0.2}/>
-                    <stop offset="95%" stopColor="#ec4899" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
+              <BarChart data={d5VsProfileBajasData} margin={{ top: 10, right: 20, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                 <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} />
                 <YAxis stroke="#94a3b8" fontSize={11} />
                 <Tooltip contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px' }} />
                 <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                <Area type="monotone" dataKey="Cargados" stroke="#6366f1" strokeWidth={2} fillOpacity={1} fill="url(#colorCargados)" />
-                <Area type="monotone" dataKey="Cierre Capacitación" stroke="#10b981" strokeWidth={2} fillOpacity={0} />
-                <Area type="monotone" dataKey="Cierre OJT" stroke="#8b5cf6" strokeWidth={2} fillOpacity={0} />
-                <Area type="monotone" dataKey="Altas" stroke="#ec4899" strokeWidth={2} fillOpacity={1} fill="url(#colorAltas)" />
-              </AreaChart>
+                <Bar dataKey="Asistentes D5" fill="#10b981" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Bajas D5 perfil" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+              </BarChart>
             </ResponsiveContainer>
           )}
         </div>

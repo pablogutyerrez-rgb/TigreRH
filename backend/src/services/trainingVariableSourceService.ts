@@ -45,6 +45,13 @@ const normalizeCampaignKey = (value: unknown) => normalizeKey(value)
   .replace(/\bempresas\b/g, '')
   .replace(/[^a-z0-9]/g, '');
 const normalizeStatusKey = (value: unknown) => normalizeKey(value).replace(/[^a-z0-9]/g, '');
+const EXCLUDENT_DESERTION_REASONS = new Set([
+  'nosepresento', 'abandonodurantecapacitacion', 'noaceptacondiciones', 'otrapropuestalaboral',
+  'problemasdehorario', 'problemaspersonales', 'problemasdesalud', 'desistimientovoluntario',
+]);
+const isExcludentDesertion = (record: StoredRecord) =>
+  normalizeStatusKey(record.estado_asistencia) === 'desistio' &&
+  EXCLUDENT_DESERTION_REASONS.has(normalizeStatusKey(record.motivo_desercion));
 const normalizeIds = (value: unknown) => Array.isArray(value)
   ? value.map(normalizeText).filter(Boolean)
   : [];
@@ -168,8 +175,11 @@ export const calculateTrainingVariableFromData = async (
 
   const selectedIdSet = new Set(selectedIds);
   const selectedCodes = validSessions.map((session) => sourceFromSession(session).codigo);
-  const selectedParticipants = participants.filter((participant) => selectedIdSet.has(normalizeText(participant.training_session_id)));
   const selectedAttendance = attendance.filter((record) => selectedIdSet.has(normalizeText(record.training_session_id)));
+  const excludentParticipantIds = new Set(selectedAttendance.filter(isExcludentDesertion).map((record) => normalizeText(record.participant_id)));
+  const selectedParticipants = participants.filter((participant) =>
+    selectedIdSet.has(normalizeText(participant.training_session_id)) && !excludentParticipantIds.has(participant.id),
+  );
 
   if (filters?.campanas?.length && validSessions.some((session) =>
     !filters.campanas!.includes(normalizeText(session.campana || session['campaña'])))) {
@@ -183,7 +193,7 @@ export const calculateTrainingVariableFromData = async (
   ));
   const dayOneCount = phases.reduce((sum, phase) => sum + phase.d1Ids.size, 0);
   const finalDayCount = phases.reduce((sum, phase) => sum + phase.d10Ids.size, 0);
-  const initialTraining = phases.reduce((sum, phase) => sum + phase.d2Ids.size, 0);
+  const initialTraining = phases.reduce((sum, phase) => sum + phase.d1Ids.size, 0);
   const finalTraining = phases.reduce((sum, phase) => sum + phase.d5Ids.size, 0);
   const initialOjt = phases.reduce((sum, phase) => sum + phase.d6Ids.size, 0);
   const finalOjt = phases.reduce((sum, phase) => sum + phase.d10Ids.size, 0);

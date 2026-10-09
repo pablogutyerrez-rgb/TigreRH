@@ -28,7 +28,6 @@ import {
   X
 } from 'lucide-react';
 import { TrainingSession, OjtModule, Participant, User as AppUser, AttendanceStatus, AttendanceRecord, TrainingSurvey, SurveyResponse, OperationConfirmation } from '../types';
-import { overlapsDateRange } from '../utils/surveyFilters';
 import { buildTrainingWorkbook } from '../utils/trainingExport';
 import { permissions } from '../utils/permissions';
 import { getBusinessDayDate, getTrainingDays, getTrainingDaysCount } from '../utils/trainingDays';
@@ -170,8 +169,9 @@ export default function Capacitaciones({
   const [filterDesde, setFilterDesde] = useState('');
   const [filterHasta, setFilterHasta] = useState('');
   const [filterFormador, setFilterFormador] = useState('todos');
-  const [filterMes, setFilterMes] = useState('todos');
-  const [filterAnio, setFilterAnio] = useState('todos');
+  const [filterMes, setFilterMes] = useState<string[]>([]);
+  const [filterAnio, setFilterAnio] = useState<string[]>([]);
+  const [filterGeneracion, setFilterGeneracion] = useState('todos');
   const [filterEtapa, setFilterEtapa] = useState<'todas' | 'initial' | 'ojt'>('todas');
   const [assigningOjtId, setAssigningOjtId] = useState<string | null>(null);
   const [editingOjtId, setEditingOjtId] = useState<string | null>(null);
@@ -1347,27 +1347,30 @@ export default function Capacitaciones({
 
       const matchesCampaña = filterCampaña === 'todos' || s.campaña === filterCampaña;
       const matchesEstado = filterEstado === 'todos' || s.estado === filterEstado;
-      const matchesFecha = overlapsDateRange(s.fecha_inicio, s.fecha_fin, filterDesde, filterHasta);
+      const matchesFecha = (!filterDesde || s.fecha_inicio >= filterDesde) && (!filterHasta || s.fecha_inicio <= filterHasta);
       const matchesFormador = filterFormador === 'todos' || getSessionTrainerIds(s).includes(filterFormador);
-      const matchesMes = filterMes === 'todos' || s.fecha_inicio.slice(5, 7) === filterMes;
-      const matchesAnio = filterAnio === 'todos' || s.fecha_inicio.slice(0, 4) === filterAnio;
+      const matchesMes = filterMes.length === 0 || filterMes.includes(s.fecha_inicio.slice(5, 7));
+      const matchesAnio = filterAnio.length === 0 || filterAnio.includes(s.fecha_inicio.slice(0, 4));
+      const matchesGeneracion = filterGeneracion === 'todos' || identifier === filterGeneracion;
 
       // If user is a Formador, they can only see their own assigned sessions (this is double guarded here)
       const matchesRoleAccess =
         currentUser.rol !== 'Formador' || isSessionAssignedTrainer(s, currentUser.id);
 
-      return matchesSearch && matchesCampaña && matchesEstado && matchesFecha && matchesFormador && matchesMes && matchesAnio && matchesRoleAccess;
+      return matchesSearch && matchesCampaña && matchesEstado && matchesFecha && matchesFormador && matchesMes && matchesAnio && matchesGeneracion && matchesRoleAccess;
     });
-  }, [sessions, searchTerm, filterCampaña, filterEstado, filterDesde, filterHasta, filterFormador, filterMes, filterAnio, currentUser]);
+  }, [sessions, searchTerm, filterCampaña, filterEstado, filterDesde, filterHasta, filterFormador, filterMes, filterAnio, filterGeneracion, currentUser]);
 
   const matchesOjtSession = (module: OjtModule, id: string) => sessions.some((session) =>
       session.id === id &&
       (currentUser.rol !== 'Formador' || isSessionAssignedTrainer(session, currentUser.id)) &&
       (filterCampaña === 'todos' || session.campaña === filterCampaña) &&
       (filterFormador === 'todos' || getSessionTrainerIds(session).includes(filterFormador)) &&
-      (filterMes === 'todos' || module.fecha_inicio.slice(5, 7) === filterMes) &&
-      (filterAnio === 'todos' || module.fecha_inicio.slice(0, 4) === filterAnio) &&
-      overlapsDateRange(module.fecha_inicio, module.fecha_fin, filterDesde, filterHasta) &&
+      (filterMes.length === 0 || filterMes.includes(module.fecha_inicio.slice(5, 7))) &&
+      (filterAnio.length === 0 || filterAnio.includes(module.fecha_inicio.slice(0, 4))) &&
+      (!filterDesde || module.fecha_inicio >= filterDesde) &&
+      (!filterHasta || module.fecha_inicio <= filterHasta) &&
+      (filterGeneracion === 'todos' || getTrainingIdentifier(session) === filterGeneracion) &&
       (!searchTerm || [module.nombre, session.nombre_generacion, session.campaña, session.formador_nombre]
         .some((value) => value.toLowerCase().includes(searchTerm.toLowerCase()))));
   const visibleOjtModules = ojtModules.filter((module) =>
@@ -1457,6 +1460,11 @@ export default function Capacitaciones({
                 </select>
               </div>
 
+              <select value={filterGeneracion} onChange={(event) => setFilterGeneracion(event.target.value)} aria-label="Generación" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm">
+                <option value="todos">Todas las generaciones</option>
+                {Array.from(new Set(sessions.map(getTrainingIdentifier))).sort().map((code) => <option key={code} value={code}>{code}</option>)}
+              </select>
+
               <div>
                 <select
                   value={filterEstado}
@@ -1489,12 +1497,10 @@ export default function Capacitaciones({
                 <option value="todos">Todos los formadores</option>
                 {trainers.map((trainer) => <option key={trainer.id} value={trainer.id}>{trainer.nombre}</option>)}
               </select>
-              <select value={filterMes} onChange={(event) => setFilterMes(event.target.value)} aria-label="Mes" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm">
-                <option value="todos">Todos los meses</option>
-                {Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, '0')).map((month) => <option key={month} value={month}>{month}</option>)}
+              <select multiple value={filterMes} onChange={(event) => setFilterMes(Array.from(event.currentTarget.selectedOptions, (option) => option.value))} aria-label="Meses" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm">
+                {Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, '0')).map((month, index) => <option key={month} value={month}>{new Intl.DateTimeFormat('es-PE', { month: 'long' }).format(new Date(2026, index, 1))}</option>)}
               </select>
-              <select value={filterAnio} onChange={(event) => setFilterAnio(event.target.value)} aria-label="Año" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm">
-                <option value="todos">Todos los años</option>
+              <select multiple value={filterAnio} onChange={(event) => setFilterAnio(Array.from(event.currentTarget.selectedOptions, (option) => option.value))} aria-label="Años" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm">
                 {Array.from(new Set(sessions.map((session) => session.fecha_inicio.slice(0, 4)))).sort().reverse().map((year) => <option key={year} value={year}>{year}</option>)}
               </select>
               <select value={filterEtapa} onChange={(event) => setFilterEtapa(event.target.value as typeof filterEtapa)} aria-label="Etapa" className="w-full glass-input rounded-xl px-3 py-2.5 text-sm">

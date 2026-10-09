@@ -5,6 +5,7 @@ import { calculateTrainingVariablePreview as preview } from './trainingVariableC
 import { calculateTrainingVariableFromData } from '../../backend/src/services/trainingVariableSourceService';
 import { normalizeTerminations } from '../../backend/src/services/rotationService';
 import { inspectCommercialImport } from '../../backend/src/services/commercialService';
+import { calculatePhaseMetrics } from '../../backend/src/services/trainingPhaseMetrics';
 import { prospectComparison, campaignKey, filterProspectRecords } from './prospectMetrics';
 import { buildTrainingWorkbook, TRAINING_EXPORT_HEADERS } from './trainingExport';
 import * as XLSX from 'xlsx';
@@ -77,6 +78,21 @@ test('diez altas D10 RUC10 y veinte ventas de Prospectos alcanzan productividad 
   assert.equal(result.detalle.altas_operacion, 10);
   assert.equal(result.detalle.ventas_reales, 20);
   assert.equal(result.porcentaje_produccion_grupal, 100);
+});
+test('feriado conserva la retención y Altas exige Asistió en D10', () => {
+  const metrics = calculatePhaseMetrics(new Set(['a', 'b']), [
+    { participant_id: 'a', dia: 1, estado_asistencia: 'Asistió' },
+    { participant_id: 'b', dia: 1, estado_asistencia: 'Asistió' },
+    { participant_id: 'a', dia: 5, estado_asistencia: 'Feriado' },
+    { participant_id: 'b', dia: 5, estado_asistencia: 'Asistió' },
+    { participant_id: 'a', dia: 6, estado_asistencia: 'Feriado' },
+    { participant_id: 'b', dia: 6, estado_asistencia: 'Asistió' },
+    { participant_id: 'a', dia: 10, estado_asistencia: 'Feriado' },
+    { participant_id: 'b', dia: 10, estado_asistencia: 'Asistió' },
+  ], []);
+  assert.equal(metrics.retencionCapacitacion, 100);
+  assert.equal(metrics.retencionOjt, 100);
+  assert.deepEqual([...metrics.altasD10Ids], ['b']);
 });
 test('importa bajas desde BASE con fechas seriales y DNI numérico', () => {
   const rows = normalizeTerminations([{

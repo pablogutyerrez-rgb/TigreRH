@@ -1,4 +1,4 @@
-const isPresentAttendance = (status?: string) => ['asistio', 'tardanza'].includes((status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim());
+const isPresentAttendance = (status?: string) => ['asistio', 'tardanza', 'feriado'].includes((status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim());
 const isAttendedAttendance = (status?: string) => (status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim() === 'asistio';
 
 export const calculatePhaseMetrics = (
@@ -44,7 +44,7 @@ export const calculatePhaseMetrics = (
     ojtParticipantIds,
     altasD10Ids,
     confirmedAltaIds,
-    retencionCapacitacion: d2Ids.size > 0 ? Math.round((d5Ids.size / d2Ids.size) * 100) : 0,
+    retencionCapacitacion: d1Ids.size > 0 ? Math.round((d5Ids.size / d1Ids.size) * 100) : 0,
     retencionOjt: d6Ids.size > 0 ? Math.round((d10Ids.size / d6Ids.size) * 100) : 0,
     desercionesFinales,
     desercionFinalRate: d2Ids.size > 0 ? Math.round((desercionesFinales / d2Ids.size) * 100) : 0,
