@@ -1136,12 +1136,8 @@ export default function App() {
     session: TrainingSession | undefined,
     participantIds: string[],
   ): AttendanceRecord[] => {
-    const hasSeparateOjtPhase = session?.training_model === 'split_ojt' ||
-      Array.isArray(session?.formador_capacitacion_inicial_ids) ||
-      Array.isArray(session?.formador_ojt_ids);
-    const trainingDaysCount = hasSeparateOjtPhase
-      ? (baseRecord.dia <= 5 ? 5 : 10)
-      : getTrainingDaysCount(session);
+    // Nunca propagar una baja registrada en Capacitación Inicial hacia OJT.
+    const trainingDaysCount = baseRecord.dia <= 5 ? 5 : getTrainingDaysCount(session);
     if (!isDropoutAttendance(baseRecord.estado_asistencia) || baseRecord.dia >= trainingDaysCount) return [];
     const now = new Date().toISOString();
     const futureDays = Array.from({ length: trainingDaysCount - baseRecord.dia }, (_, index) => baseRecord.dia + index + 1);
