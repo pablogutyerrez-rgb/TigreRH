@@ -23,12 +23,18 @@ export const filterSurveys = (surveys: TrainingSurvey[], sessions: TrainingSessi
     const session = byId.get(survey.training_session_id);
     const campaign = session?.campaña || survey.campaña;
     const generation = session?.generation_code || session?.nombre_generacion || survey.codigo_generacion;
-    const trainers = session ? getSessionTrainerIds(session) : [survey.formador_id];
+    const trainers = survey.survey_type === 'operaciones'
+      ? []
+      : survey.survey_type === 'ojt'
+        ? [survey.formador_id]
+        : session ? getSessionTrainerIds(session) : [survey.formador_id];
+    const start = survey.start_date || session?.fecha_inicio || '';
+    const end = survey.end_date || session?.fecha_fin || '';
     return survey.estado !== 'Eliminada' &&
       (!filters.campaign || normalize(campaign) === normalize(filters.campaign)) &&
       (!filters.generation || normalize(generation) === normalize(filters.generation)) &&
       (!filters.trainer || trainers.includes(filters.trainer)) &&
       (!filters.type || normalize(session?.tipo_capacitacion || survey.training_type) === normalize(filters.type)) &&
-      overlapsDateRange(session?.fecha_inicio || survey.start_date || '', session?.fecha_fin || survey.end_date || '', filters.from, filters.to);
+      overlapsDateRange(start, end, filters.from, filters.to);
   });
 };

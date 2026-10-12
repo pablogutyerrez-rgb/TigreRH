@@ -325,6 +325,7 @@ export interface AuditLog {
 }
 
 export type SurveyStatus = 'Borrador' | 'Habilitada' | 'Deshabilitada' | 'Cerrada' | 'Eliminada';
+export type SurveyType = 'inicial' | 'ojt' | 'operaciones';
 
 export interface TrainingSurvey {
   id: string;
@@ -350,14 +351,19 @@ export interface TrainingSurvey {
   closed_at?: string;
   deleted_at?: string;
   deleted_by?: string;
+  survey_type?: SurveyType;
+  ojt_module_id?: string;
+  grupo_ojt?: string;
+  subcampaña?: string;
+  supervisor_nombres?: string[];
 }
 
 export interface SurveyResponse {
   id: string;
   training_survey_id: string;
-  participant_id: string;
-  dni: string;
-  nombre_ejecutivo: string;
+  participant_id?: string;
+  dni?: string;
+  nombre_ejecutivo?: string;
   campaña: string;
   codigo_generacion: string;
   formador_id: string;
@@ -371,8 +377,8 @@ export interface SurveyResponse {
   q6: number;
   q7: number;
   q8: number;
-  q9: number;
-  q10: number;
+  q9?: number;
+  q10?: number;
   total_score: number;
   final_score_20: number;
   classification: 'Excelente' | 'Bueno' | 'Regular' | 'Crítico';
@@ -389,6 +395,14 @@ export interface SurveyResponse {
   promedio_individual?: number;
   comentario_positivo?: string;
   aspecto_mejora?: string;
+  survey_type?: SurveyType;
+  subcampaña?: string;
+  supervisor_nombre?: string;
+  dificultades?: string[];
+  intencion_salida?: 'Sí' | 'No' | 'Tengo dudas' | 'Prefiero no responder';
+  motivo_salida?: string;
+  comentario_q11?: string;
+  comentario_q12?: string;
 }
 
 export interface TrainingClosure {

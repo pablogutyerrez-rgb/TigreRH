@@ -2656,6 +2656,7 @@ export default function App() {
                   sessions={sessions}
                   participants={participants}
                   attendance={attendance}
+                  ojtModules={ojtModules}
                   users={users}
                   currentUser={activeUser}
                   onUpdateSurveyStatus={handleUpdateSurveyStatus}

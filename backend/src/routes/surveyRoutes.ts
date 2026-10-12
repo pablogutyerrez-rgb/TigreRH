@@ -11,13 +11,17 @@ const router = Router();
 const surveyStatusSchema = z.enum(['Borrador', 'Habilitada', 'Deshabilitada', 'Cerrada', 'Eliminada']);
 const surveySchema = z.object({
   id: z.string().min(1),
-  training_session_id: z.string().min(1),
-  codigo_generacion: z.string().min(1),
+  training_session_id: z.string(),
+  codigo_generacion: z.string(),
   campaña: z.string().min(1),
   formador_id: z.string(),
   formador_nombre: z.string(),
   estado: surveyStatusSchema,
   token: z.string().trim().min(1).max(160),
+  survey_type: z.enum(['inicial', 'ojt', 'operaciones']).optional(),
+  ojt_module_id: z.string().optional(),
+  subcampaña: z.string().optional(),
+  supervisor_nombres: z.array(z.string().min(1)).optional(),
 }).passthrough();
 
 const normalizeSurveyToken = (value: unknown) =>
@@ -42,21 +46,48 @@ router.post(
       res.status(400).json({ message: 'Datos de encuesta invalidos.' });
       return;
     }
-    const survey = { ...parsed.data, token: normalizeSurveyToken(parsed.data.token) };
-    const session = await adminDb.collection('sessions').doc(survey.training_session_id).get();
-    if (!session.exists) {
-      res.status(404).json({ message: 'La capacitacion vinculada no existe.' });
+    const survey = { ...parsed.data, survey_type: parsed.data.survey_type || 'inicial', token: normalizeSurveyToken(parsed.data.token), created_by_id: req.user!.uid };
+    if (survey.survey_type === 'inicial') {
+      if (!survey.training_session_id) {
+        res.status(400).json({ message: 'La encuesta inicial requiere una capacitación vinculada.' });
+        return;
+      }
+      const session = await adminDb.collection('sessions').doc(survey.training_session_id).get();
+      if (!session.exists) {
+        res.status(404).json({ message: 'La capacitacion vinculada no existe.' });
+        return;
+      }
+    }
+    if (survey.survey_type === 'ojt') {
+      if (!survey.ojt_module_id) {
+        res.status(400).json({ message: 'La encuesta OJT requiere un grupo OJT vinculado.' });
+        return;
+      }
+      const module = await adminDb.collection('ojt_modules').doc(survey.ojt_module_id).get();
+      if (!module.exists) {
+        res.status(404).json({ message: 'El grupo OJT vinculado no existe.' });
+        return;
+      }
+    }
+    if (survey.survey_type === 'operaciones' && !survey.campaña) {
+      res.status(400).json({ message: 'La encuesta de Operaciones requiere una campaña.' });
       return;
     }
     if (await findSurveyWithToken(survey.token)) {
       res.status(409).json({ message: 'El token del enlace ya pertenece a otra encuesta.' });
       return;
     }
-    const existingForSession = await adminDb.collection('surveys')
-      .where('training_session_id', '==', survey.training_session_id)
-      .get();
-    if (existingForSession.docs.some((doc) => doc.data().estado !== 'Eliminada')) {
-      res.status(409).json({ message: 'La capacitacion ya tiene una encuesta activa.' });
+    const allSurveys = await adminDb.collection('surveys').get();
+    const duplicate = allSurveys.docs.some((doc) => {
+      const item = doc.data();
+      if (item.estado === 'Eliminada') return false;
+      if ((item.survey_type || 'inicial') !== survey.survey_type) return false;
+      if (survey.survey_type === 'ojt') return item.ojt_module_id === survey.ojt_module_id;
+      if (survey.survey_type === 'operaciones') return item.campaña === survey.campaña && String(item.subcampaña || '') === String(survey.subcampaña || '');
+      return item.training_session_id === survey.training_session_id;
+    });
+    if (duplicate) {
+      res.status(409).json({ message: 'Ya existe una encuesta activa para el contexto seleccionado.' });
       return;
     }
     await adminDb.collection('surveys').doc(survey.id).create(survey);
@@ -119,11 +150,14 @@ router.patch(
 
     const survey = surveyDoc.data();
     if (req.user!.rol === 'Reclutador') {
-      const session = await adminDb
-        .collection('sessions')
-        .doc(String(survey?.training_session_id || ''))
-        .get();
-      if (!session.exists || session.data()?.reclutador_id !== req.user!.uid) {
+      const type = survey?.survey_type || 'inicial';
+      const sessionIds = type === 'ojt'
+        ? ((await adminDb.collection('ojt_modules').doc(String(survey?.ojt_module_id || '')).get()).data()?.generation_ids || [])
+        : [String(survey?.training_session_id || '')];
+      const linkedSessions = await Promise.all(sessionIds.map((id: unknown) => adminDb.collection('sessions').doc(String(id)).get()));
+      const ownsTraining = linkedSessions.some((session) => session.exists && session.data()?.reclutador_id === req.user!.uid);
+      const ownsOperationsSurvey = type === 'operaciones' && survey?.created_by_id === req.user!.uid;
+      if (!ownsTraining && !ownsOperationsSurvey) {
         res.status(403).json({ message: 'Solo puedes gestionar encuestas de tus capacitaciones.' });
         return;
       }

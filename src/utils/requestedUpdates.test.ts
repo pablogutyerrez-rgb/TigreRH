@@ -132,6 +132,25 @@ test('inspeccion comercial reconstruye Culqi y conserva pendientes reales', () =
   assert.equal(result.records[1].postventa, 'Sin transacciones');
   assert.equal(result.inspection.formulas.length, 1);
 });
+test('consolida BASE y BASE (AN) sin duplicar terminales e ignora hojas no autorizadas', () => {
+  const result = inspectCommercialImport({ campaign: 'Culqi', file: { name: 'culqi.xlsx', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content_base64: 'AA==', sha256: 'b'.repeat(64) }, sheets: [
+    { name: 'BASE', headers: [], formulas: [], row_count: 1, rows: [{ Terminal: 'T-1', 'Fecha venta': '2026-10-01', Producto: 'CulqiFull', GPV: 1200, Transacciones: 4 }] },
+    { name: 'BASE (AN)', headers: [], formulas: [], row_count: 1, rows: [{ Terminal: 'T-1', 'Fecha venta': '2026-10-01', Producto: 'CulqiFull', Supervisor: 'Ana' }] },
+    { name: 'BASE (1)', headers: [], formulas: [], row_count: 1, rows: [{ Terminal: 'T-2', 'Fecha venta': '2026-10-01' }] },
+  ] });
+  assert.equal(result.records.length, 1);
+  assert.equal(result.duplicates, 1);
+  assert.equal(result.records[0].supervisor, 'Ana');
+  assert.deepEqual(result.inspection.ignored_sheets, ['BASE (1)']);
+});
+test('lector comercial conserva fechas Date y columnas num_serie, id_merchant y gpv_m0', () => {
+  const result = inspectCommercialImport({ campaign: 'Culqi', file: { name: 'culqi.xlsx', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content_base64: 'AA==', sha256: 'c'.repeat(64) }, sheets: [{ name: 'BASE', headers: [], formulas: [], row_count: 1, rows: [{ fecha_venta: new Date('2026-09-30T05:00:00.000Z'), num_serie: 'P8B-1', id_merchant: '2001', producto: 'CULQIFULL', gpv_m0: 1000, trx_m0: 4 }] }] });
+  assert.equal(result.records.length, 1);
+  assert.equal(result.records[0].sale_date, '2026-09-30');
+  assert.equal(result.records[0].terminal_id, 'P8B-1');
+  assert.equal(result.records[0].merchant_id, '2001');
+  assert.equal(result.records[0].activation, true);
+});
 test('comparacion cuenta ventas sin limite de fechas y deduplica ejecutivos', () => {
   const prospects = Array.from({ length: 12 }, (_, i) => ({ id: String(i), campana: 'Culqi', training_session_id: 'a',
     fecha_registro: '2026-10-' + String(i + 1).padStart(2, '0'), ejecutivo_dni: '123', estado: 'Venta / Alta' })) as Prospect[];

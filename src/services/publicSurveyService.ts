@@ -30,13 +30,13 @@ export const getPublicSurveyMetadata = async (token: string) => {
     `${API_BASE_URL}/api/public-surveys/${encodeURIComponent(token)}/metadata`,
     { cache: 'no-store' },
   );
-  return parseResponse<{ survey: TrainingSurvey }>(response);
+  return parseResponse<{ survey: TrainingSurvey; submission_nonce?: string }>(response);
 };
 
 export const submitPublicSurveyResponse = async (
   token: string,
   payload: {
-    dni: string;
+    dni?: string;
     q1: number;
     q2: number;
     q3: number;
@@ -45,8 +45,15 @@ export const submitPublicSurveyResponse = async (
     q6: number;
     q7: number;
     q8: number;
-    comentario_positivo: string;
-    aspecto_mejora: string;
+    comentario_positivo?: string;
+    aspecto_mejora?: string;
+    submission_nonce?: string;
+    supervisor_nombre?: string;
+    dificultades?: string[];
+    intencion_salida?: 'Sí' | 'No' | 'Tengo dudas' | 'Prefiero no responder';
+    motivo_salida?: string;
+    comentario_q11?: string;
+    comentario_q12?: string;
   },
 ) => {
   const response = await fetch(

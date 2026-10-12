@@ -75,6 +75,8 @@ const MODULE_OPTIONS: Record<UserArea, Array<{ id: string; label: string }>> = {
     { id: 'comercial:ventas', label: 'Ventas' },
     { id: 'comercial:postventa', label: 'Postventa' },
     { id: 'comercial:datos', label: 'Gestión de Datos' },
+    { id: 'comercial:carga', label: 'Cargar reportes comerciales' },
+    { id: 'comercial:exportar', label: 'Exportar información comercial' },
   ],
   administrador: [
     { id: 'administrador:usuarios', label: 'Usuarios' },

@@ -123,9 +123,16 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
     const participantIds = new Set(
       participants.map((participant) => String(participant.id)),
     );
-    const scopedSurveys = allSurveys.filter((survey) =>
-      sessionIds.has(String(survey.training_session_id)),
+    const accessibleOjtModuleIds = new Set(
+      allOjtModules
+        .filter((module) => Array.isArray(module.generation_ids) && module.generation_ids.some((id) => sessionIds.has(String(id))))
+        .map((module) => String(module.id)),
     );
+    const canAccessSurvey = (survey: Record<string, unknown>) =>
+      sessionIds.has(String(survey.training_session_id)) ||
+      accessibleOjtModuleIds.has(String(survey.ojt_module_id || '')) ||
+      (survey.survey_type === 'operaciones' && canSeeAllSessions);
+    const scopedSurveys = allSurveys.filter(canAccessSurvey);
     const surveysById = new Map(allSurveys.map((survey) => [String(survey.id), survey]));
     const sessionsById = new Map(allSessions.map((session) => [String(session.id), session]));
     const assignedSurveyIds = new Set(
@@ -136,16 +143,14 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
         .map((survey) => String(survey.id)),
     );
     const surveys = allSurveys
-      .filter((survey) =>
-        sessionIds.has(String(survey.training_session_id)) || assignedSurveyIds.has(String(survey.id)),
-      )
+      .filter((survey) => canAccessSurvey(survey) || assignedSurveyIds.has(String(survey.id)))
       .map((survey) => {
         const session = sessionsById.get(String(survey.training_session_id));
         return canAccessSurveyLink(survey, session, user.uid, user.rol)
           ? survey
           : { ...survey, token: '' };
       });
-    const responseSurveyIds = new Set(scopedSurveys.map((survey) => String(survey.id)));
+    const responseSurveyIds = new Set(surveys.map((survey) => String(survey.id)));
     const normalizedResponses: Array<Record<string, unknown>> = allResponses.map((response) => {
       const survey = surveysById.get(String(response.training_survey_id || ''));
       const session = sessionsById.get(String(survey?.training_session_id || ''));
@@ -157,11 +162,14 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
         readStringField(session, ['generation_code', 'nombre_generacion']) ||
         readStringField(survey, ['codigo_generacion']) ||
         readStringField(response, ['codigo_generacion']);
+      const isOjtSurvey = survey?.survey_type === 'ojt';
       const trainerId =
+        (isOjtSurvey ? readStringField(survey, ['formador_id']) : '') ||
         readStringField(session, ['formador_id']) ||
         readStringField(survey, ['formador_id']) ||
         readStringField(response, ['formador_id']);
       const trainerName =
+        (isOjtSurvey ? readStringField(survey, ['formador_nombre']) : '') ||
         readStringField(session, ['formador_nombre']) ||
         readStringField(survey, ['formador_nombre']) ||
         readStringField(response, ['formador_nombre']);

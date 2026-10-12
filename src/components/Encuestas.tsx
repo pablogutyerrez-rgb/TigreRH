@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { TrainingSurvey, SurveyResponse, Participant, TrainingSession, User, UserRole, SurveyStatus, AttendanceRecord } from '../types';
+import { TrainingSurvey, SurveyResponse, Participant, TrainingSession, User, UserRole, SurveyStatus, AttendanceRecord, OjtModule, SurveyType } from '../types';
 import {
   ClipboardCheck,
   Plus,
@@ -44,7 +44,9 @@ import {
   PolarAngleAxis,
   PolarRadiusAxis,
   Radar,
-  Cell
+  Cell,
+  PieChart,
+  Pie,
 } from 'recharts';
 import * as XLSX from 'xlsx';
 import { permissions } from '../utils/permissions';
@@ -52,12 +54,21 @@ import { filterSurveys } from '../utils/surveyFilters';
 import { isSurveyEligibleParticipant } from '../utils/trainingProgress';
 import { getSessionTrainerIds, getSessionTrainerNames, isSessionAssignedTrainer } from '../utils/trainingAssignments';
 
+const OPERATIONS_SUPERVISORS: Record<string, string[]> = {
+  Culqi: ['Augusto Tello', 'Jerson Atoche', 'Romey Huiman', 'Johnny Weill', 'Christian Delgado', 'Rosel Guevara'],
+  Equifax: ['Juan Rondon', 'Hugo Navarro'],
+  'Entel Empresas': ['Rosel Guevara', 'Estefano Zambrano'],
+  'Entel Empresas / RUC 20': ['Matias Canicela', 'Katya Laiche'],
+  'Entel Empresas / RUC 10': ['Janeth Coronado'],
+};
+
 interface EncuestasProps {
   surveys: TrainingSurvey[];
   responses: SurveyResponse[];
   sessions: TrainingSession[];
   participants: Participant[];
   attendance: AttendanceRecord[];
+  ojtModules: OjtModule[];
   users: User[];
   currentUser: User;
   onUpdateSurveyStatus: (surveyId: string, status: SurveyStatus) => Promise<void>;
@@ -84,6 +95,7 @@ export default function Encuestas({
   sessions,
   participants,
   attendance,
+  ojtModules,
   users,
   currentUser,
   onUpdateSurveyStatus,
@@ -94,12 +106,13 @@ export default function Encuestas({
 }: EncuestasProps) {
   // --- Tab State ---
   const [activeTab, setActiveTab] = useState<'dashboard' | 'comentarios' | 'respuestas' | 'monitoreo' | 'links' | 'configuracion'>('dashboard');
+  const [surveySection, setSurveySection] = useState<SurveyType>('inicial');
 
   // --- Filtering State ---
   const [filterCampaign, setFilterCampaign] = useState('');
   const [filterGenerator, setFilterGenerator] = useState('');
   const [filterTrainer, setFilterTrainer] = useState('');
-  const [filterType, setFilterType] = useState('');
+  const [filterSubcampaign, setFilterSubcampaign] = useState('');
   const [dateStart, setDateStart] = useState('');
   const [dateEnd, setDateEnd] = useState('');
   const [commentKeyword, setCommentKeyword] = useState('');
@@ -111,6 +124,11 @@ export default function Encuestas({
   // --- Survey Creation Modal States ---
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [selectedSessionId, setSelectedSessionId] = useState('');
+  const [selectedOjtModuleId, setSelectedOjtModuleId] = useState('');
+  const [createSurveyType, setCreateSurveyType] = useState<SurveyType>('inicial');
+  const [operationsCampaign, setOperationsCampaign] = useState('');
+  const [operationsSubcampaign, setOperationsSubcampaign] = useState('');
+  const [operationsSupervisors, setOperationsSupervisors] = useState<string[]>([]);
   const [surveyStatus, setSurveyStatus] = useState<SurveyStatus>('Borrador');
   const [tokenInput, setTokenInput] = useState('');
   const [deleteSurveyId, setDeleteSurveyId] = useState<string | null>(null);
@@ -183,7 +201,7 @@ export default function Encuestas({
     return dniVal.substring(0, 3) + '*****';
   };
 
-  const getExecutiveLabel = (r: { dni: string; nombre_ejecutivo: string }) => {
+  const getExecutiveLabel = (r: { dni?: string; nombre_ejecutivo?: string; supervisor_nombre?: string }) => {
     if (isTrainer && anonymizeTrainers) {
       return {
         nombre: 'Ejecutivo Anónimo',
@@ -191,8 +209,8 @@ export default function Encuestas({
       };
     }
     return {
-      nombre: r.nombre_ejecutivo,
-      dni: r.dni
+      nombre: r.nombre_ejecutivo || r.supervisor_nombre || 'Respuesta anónima',
+      dni: r.dni || ''
     };
   };
 
@@ -225,17 +243,17 @@ export default function Encuestas({
       
       return {
         ...r,
-        campaña: session?.campaña || survey?.campaña || r.campaña || (r as unknown as { campana?: string }).campana || '',
+        campaña: survey?.campaña || session?.campaña || r.campaña || (r as unknown as { campana?: string }).campana || '',
         codigo_generacion: currentGenerationCode || '',
-        formador_id: survey?.formador_id || r.formador_id || '',
-        formador_nombre: survey?.formador_nombre || r.formador_nombre || '',
+        formador_id: survey?.survey_type === 'operaciones' ? '' : survey?.formador_id || r.formador_id || '',
+        formador_nombre: survey?.survey_type === 'operaciones' ? (r.supervisor_nombre || '') : survey?.formador_nombre || r.formador_nombre || '',
         q1, q2, q3, q4, q5, q6, q7, q8,
         total_score,
         final_score_20,
         classification,
         promedio_individual: r.promedio_individual !== undefined ? r.promedio_individual : Number((sum_8 / 8).toFixed(2)),
-        comentario_positivo: r.comentario_positivo || '',
-        aspecto_mejora: r.aspecto_mejora || ''
+        comentario_positivo: r.comentario_positivo || r.comentario_q11 || '',
+        aspecto_mejora: r.aspecto_mejora || r.comentario_q12 || ''
       };
     });
   }, [responses, surveys, sessions]);
@@ -253,16 +271,20 @@ export default function Encuestas({
 
   // Only active surveys (excluding deleted ones)
   const visibleSurveys = useMemo(() => {
-    return surveys.filter(s =>
-      s.estado !== 'Eliminada' &&
-      (visibleSessionIds.includes(s.training_session_id) || s.link_assigned_user_ids?.includes(currentUser.id)),
-    );
-  }, [surveys, visibleSessionIds, currentUser.id]);
+    return surveys.filter(s => s.estado !== 'Eliminada' && (
+      isAdmin || isAnalyst || isStaff || isRecruiter ||
+      visibleSessionIds.includes(s.training_session_id) || s.link_assigned_user_ids?.includes(currentUser.id)
+    ));
+  }, [surveys, visibleSessionIds, currentUser.id, isAdmin, isAnalyst, isStaff, isRecruiter]);
 
-  const filteredSurveys = useMemo(() => filterSurveys(visibleSurveys, sessions, {
+  const sectionSurveys = useMemo(() => visibleSurveys.filter((survey) => (survey.survey_type || 'inicial') === surveySection), [visibleSurveys, surveySection]);
+  const filteredSurveys = useMemo(() => filterSurveys(sectionSurveys, sessions, {
     campaign: filterCampaign, generation: filterGenerator, trainer: filterTrainer,
-    type: filterType, from: dateStart, to: dateEnd,
-  }), [visibleSurveys, sessions, filterCampaign, filterGenerator, filterTrainer, filterType, dateStart, dateEnd]);
+    type: '', from: dateStart, to: dateEnd,
+  }).filter((survey) =>
+    (!filterSubcampaign || normalizeFilterValue(survey.subcampaña) === normalizeFilterValue(filterSubcampaign)) &&
+    (survey.survey_type !== 'operaciones' || !filterTrainer || (survey.supervisor_nombres || []).includes(filterTrainer))
+  ), [sectionSurveys, sessions, filterCampaign, filterGenerator, filterTrainer, filterSubcampaign, dateStart, dateEnd]);
 
   const assignedLinkSurveys = useMemo(() => filteredSurveys.filter((survey) => {
     if (survey.estado !== 'Habilitada') return false;
@@ -295,11 +317,12 @@ export default function Encuestas({
 
   // General filtered responses from non-deleted surveys
   const filteredResponses = useMemo(() => {
-    const surveyIds = new Set(filteredSurveys.filter((survey) => visibleSessionIds.includes(survey.training_session_id)).map((survey) => survey.id));
+    const surveyIds = new Set(filteredSurveys.map((survey) => survey.id));
     return normalizedResponses.filter(r => {
-      return surveyIds.has(r.training_survey_id);
+      return surveyIds.has(r.training_survey_id) &&
+        (surveySection !== 'operaciones' || !filterTrainer || r.supervisor_nombre === filterTrainer);
     });
-  }, [normalizedResponses, filteredSurveys, visibleSessionIds]);
+  }, [normalizedResponses, filteredSurveys, surveySection, filterTrainer]);
 
   // VALID RESPONSES ONLY (Habilitada or Cerrada surveys) FOR DASHBOARD CALCULATIONS
   const dashboardResponses = useMemo(() => {
@@ -515,28 +538,61 @@ export default function Encuestas({
     ];
   }, [dashboardResponses]);
 
+  const responsibleData = useMemo(() => {
+    const grouped: Record<string, { total: number; count: number }> = {};
+    dashboardResponses.forEach((response) => {
+      const name = surveySection === 'operaciones' ? response.supervisor_nombre || 'Sin supervisor' : response.formador_nombre || 'Sin formador';
+      grouped[name] ||= { total: 0, count: 0 };
+      grouped[name].total += response.final_score_20;
+      grouped[name].count += 1;
+    });
+    return Object.entries(grouped)
+      .filter(([, value]) => surveySection !== 'operaciones' || value.count >= 3)
+      .map(([name, value]) => ({ name, respuestas: value.count, promedio: Number((value.total / value.count).toFixed(2)) }));
+  }, [dashboardResponses, surveySection]);
+
+  const heatmapData = useMemo(() => responsibleData.map(({ name }) => {
+    const rows = dashboardResponses.filter((response) => (surveySection === 'operaciones' ? response.supervisor_nombre : response.formador_nombre) === name);
+    return { name, values: Array.from({ length: 8 }, (_, index) => Number((rows.reduce((sum, response) => sum + response[`q${index + 1}` as keyof typeof response] as number, 0) / rows.length || 0).toFixed(2))) };
+  }), [responsibleData, dashboardResponses, surveySection]);
+
+  const stackedQuestionData = useMemo(() => Array.from({ length: 8 }, (_, index) => {
+    const key = `q${index + 1}` as keyof typeof dashboardResponses[number];
+    const counts = { question: `Q${index + 1}`, '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 };
+    dashboardResponses.forEach((response) => { const value = Number(response[key]); if (value >= 1 && value <= 5) counts[String(value) as '1' | '2' | '3' | '4' | '5'] += 1; });
+    return counts;
+  }), [dashboardResponses]);
+
   // --- FILTRAR COMENTARIOS EN TIEMPO REAL ---
   const filteredComments = useMemo(() => {
     return filteredResponses.filter(r => {
       if (!commentKeyword) return true;
       const kw = commentKeyword.toLowerCase();
       return (
-        r.comentario_positivo.toLowerCase().includes(kw) ||
-        r.aspecto_mejora.toLowerCase().includes(kw) ||
-        r.nombre_ejecutivo.toLowerCase().includes(kw) ||
-        r.dni.includes(kw)
+        (r.comentario_positivo || r.comentario_q11 || '').toLowerCase().includes(kw) ||
+        (r.aspecto_mejora || r.comentario_q12 || '').toLowerCase().includes(kw) ||
+        (r.nombre_ejecutivo || r.supervisor_nombre || '').toLowerCase().includes(kw) ||
+        (r.dni || '').includes(kw)
       );
     });
   }, [filteredResponses, commentKeyword]);
 
   // --- LISTS FOR INPUT DROPDOWNS ---
   const campaignsList = useMemo(() => {
-    return Array.from(new Set(visibleSurveys.map(s => getSurveySession(s)?.campaña || s.campaña).filter(Boolean))).sort();
-  }, [visibleSurveys, sessions]);
+    return Array.from(new Set(sectionSurveys.map(s => getSurveySession(s)?.campaña || s.campaña).filter(Boolean))).sort();
+  }, [sectionSurveys, sessions]);
 
   const trainersList = useMemo(() => {
     const unique: { [key: string]: string } = {};
-    visibleSurveys.forEach(s => {
+    sectionSurveys.forEach(s => {
+      if (s.survey_type === 'operaciones') {
+        (s.supervisor_nombres || []).forEach((name) => { unique[name] = name; });
+        return;
+      }
+      if (s.survey_type === 'ojt') {
+        if (s.formador_id) unique[s.formador_id] = s.formador_nombre;
+        return;
+      }
       const session = getSurveySession(s);
       const ids = session ? getSessionTrainerIds(session) : [s.formador_id];
       const names = session ? getSessionTrainerNames(session) : [s.formador_nombre];
@@ -545,17 +601,18 @@ export default function Encuestas({
       });
     });
     return Object.keys(unique).map(id => ({ id, nombre: unique[id] }));
-  }, [visibleSurveys, sessions, users]);
+  }, [sectionSurveys, sessions, users]);
 
   const generationsList = useMemo(() => {
-    return Array.from(new Set(visibleSurveys.map(s => getSurveyGenerationCode(s))));
-  }, [visibleSurveys, sessions]);
+    return Array.from(new Set(sectionSurveys.map(s => getSurveyGenerationCode(s))));
+  }, [sectionSurveys, sessions]);
 
-  const trainingTypesList = useMemo(() => Array.from(new Set(
-    visibleSurveys
-      .map((survey) => getSurveySession(survey)?.tipo_capacitacion || survey.training_type)
+  const subcampaignsList = useMemo(() => Array.from(new Set(
+    sectionSurveys
+      .filter((survey) => !filterCampaign || normalizeFilterValue(survey.campaña) === normalizeFilterValue(filterCampaign))
+      .map((survey) => survey.subcampaña)
       .filter(Boolean) as string[],
-  )).sort(), [visibleSurveys, sessions]);
+  )).sort(), [sectionSurveys, filterCampaign]);
 
   // Sessions that do not have an active satisfaction survey yet (to avoid duplicates)
   const sessionsWithoutSurvey = useMemo(() => {
@@ -582,25 +639,40 @@ export default function Encuestas({
     }
   };
 
+  const selectedOjtModule = useMemo(() => ojtModules.find((module) => module.id === selectedOjtModuleId), [ojtModules, selectedOjtModuleId]);
+  const availableOperationsSupervisors = useMemo(() => Array.from(new Set(
+    operationsCampaign ? OPERATIONS_SUPERVISORS[operationsCampaign] || [] : Object.values(OPERATIONS_SUPERVISORS).flat(),
+  )), [operationsCampaign]);
+
   const handleCreateSurveySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedSessionId || !selectedSessionObj) return;
+    if (createSurveyType === 'inicial' && (!selectedSessionId || !selectedSessionObj)) return;
+    if (createSurveyType === 'ojt' && !selectedOjtModule) return;
+    if (createSurveyType === 'operaciones' && (!operationsCampaign || operationsSupervisors.length === 0)) return;
 
-    const genCode = selectedSessionObj.generation_code || selectedSessionObj.nombre_generacion;
-    const cleanToken = tokenInput.trim() || genCode.trim().replace(/\s+/g, '-').toUpperCase();
+    const sourceSession = selectedSessionObj || (selectedOjtModule ? sessions.find((session) => selectedOjtModule.generation_ids.includes(session.id)) : undefined);
+    const genCode = createSurveyType === 'operaciones'
+      ? `${operationsCampaign}${operationsSubcampaign ? `-${operationsSubcampaign}` : ''}`
+      : createSurveyType === 'ojt' ? selectedOjtModule!.nombre : selectedSessionObj!.generation_code || selectedSessionObj!.nombre_generacion;
+    const cleanToken = tokenInput.trim() || `${createSurveyType === 'ojt' ? 'OJT-' : createSurveyType === 'operaciones' ? 'OPS-' : ''}${genCode}`.trim().replace(/\s+/g, '-').toUpperCase();
 
     const newSurvey: TrainingSurvey = {
       id: `srv-${Math.random().toString(36).substring(2, 11)}`,
-      training_session_id: selectedSessionId,
+      training_session_id: createSurveyType === 'inicial' ? selectedSessionId : '',
       codigo_generacion: genCode,
-      campaña: selectedSessionObj.campaña,
-      formador_id: selectedSessionObj.formador_id,
-      formador_nombre: selectedSessionObj.formador_nombre,
+      campaña: createSurveyType === 'operaciones' ? operationsCampaign : sourceSession?.campaña || '',
+      formador_id: createSurveyType === 'ojt' ? selectedOjtModule!.formador_ojt_ids[0] || '' : sourceSession?.formador_id || '',
+      formador_nombre: createSurveyType === 'ojt' ? selectedOjtModule!.formador_ojt_nombres.join(', ') : sourceSession?.formador_nombre || '',
       estado: surveyStatus,
       token: cleanToken,
-      training_type: selectedSessionObj.tipo_capacitacion,
-      start_date: selectedSessionObj.fecha_inicio,
-      end_date: selectedSessionObj.fecha_fin,
+      survey_type: createSurveyType,
+      ojt_module_id: createSurveyType === 'ojt' ? selectedOjtModule!.id : undefined,
+      grupo_ojt: createSurveyType === 'ojt' ? selectedOjtModule!.nombre : undefined,
+      subcampaña: createSurveyType === 'operaciones' ? operationsSubcampaign : undefined,
+      supervisor_nombres: createSurveyType === 'operaciones' ? operationsSupervisors : undefined,
+      training_type: sourceSession?.tipo_capacitacion,
+      start_date: createSurveyType === 'ojt' ? selectedOjtModule!.fecha_inicio : sourceSession?.fecha_inicio,
+      end_date: createSurveyType === 'ojt' ? selectedOjtModule!.fecha_fin : sourceSession?.fecha_fin,
       created_by: currentUser.nombre,
       created_at: new Date().toISOString()
     };
@@ -618,6 +690,10 @@ export default function Encuestas({
 
     setIsCreateModalOpen(false);
     setSelectedSessionId('');
+    setSelectedOjtModuleId('');
+    setOperationsCampaign('');
+    setOperationsSubcampaign('');
+    setOperationsSupervisors([]);
     setSurveyStatus('Borrador');
     setTokenInput('');
   };
@@ -899,6 +975,18 @@ export default function Encuestas({
         </div>
       </div>
 
+      <div className="border-b border-slate-200 flex flex-wrap gap-2">
+        {([
+          ['inicial', 'Capacitación Inicial', ClipboardCheck],
+          ['ojt', 'Acompañamiento OJT', UserCheck],
+          ['operaciones', 'Experiencia en Operaciones', Building2],
+        ] as const).map(([section, label, Icon]) => (
+          <button key={section} onClick={() => { setSurveySection(section); setFilterCampaign(''); setFilterGenerator(''); setFilterTrainer(''); setFilterSubcampaign(''); }} className={`py-2.5 px-4 text-xs font-bold border-b-2 flex items-center gap-2 ${surveySection === section ? 'border-fuchsia-600 text-fuchsia-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+            <Icon className="w-4 h-4" />{label}
+          </button>
+        ))}
+      </div>
+
       {/* 2. GLOBAL FILTERS BAR */}
       <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-xs space-y-4">
         <div className="flex items-center gap-2 text-slate-700 font-extrabold text-xs">
@@ -923,7 +1011,7 @@ export default function Encuestas({
           </div>
 
           {/* Código de generación */}
-          <div className="space-y-1">
+          {surveySection !== 'operaciones' && <div className="space-y-1">
             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Código</label>
             <select
               value={filterGenerator}
@@ -935,18 +1023,18 @@ export default function Encuestas({
                 <option key={g} value={g}>{g}</option>
               ))}
             </select>
-          </div>
+          </div>}
 
           {/* Formador */}
           <div className="space-y-1">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Formador</label>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">{surveySection === 'operaciones' ? 'Supervisor' : 'Formador'}</label>
             <select
-              disabled={isTrainer}
-              value={isTrainer ? currentUser.id : filterTrainer}
+              disabled={isTrainer && surveySection !== 'operaciones'}
+              value={isTrainer && surveySection !== 'operaciones' ? currentUser.id : filterTrainer}
               onChange={(e) => setFilterTrainer(e.target.value)}
               className="w-full bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-xl px-3 py-2 font-semibold outline-hidden focus:ring-1 focus:ring-fuchsia-500 disabled:opacity-75"
             >
-              {isTrainer ? (
+              {isTrainer && surveySection !== 'operaciones' ? (
                 <option value={currentUser.id}>{currentUser.nombre}</option>
               ) : (
                 <>
@@ -959,20 +1047,19 @@ export default function Encuestas({
             </select>
           </div>
 
-          {/* Tipo Capacitación */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Tipo de Cap.</label>
+          {surveySection === 'operaciones' && <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Subcampaña</label>
             <select
-              value={filterType}
-              onChange={(e) => setFilterType(e.target.value)}
+              value={filterSubcampaign}
+              onChange={(e) => setFilterSubcampaign(e.target.value)}
               className="w-full bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-xl px-3 py-2 font-semibold outline-hidden focus:ring-1 focus:ring-fuchsia-500"
             >
               <option value="">Todos</option>
-              {trainingTypesList.map((trainingType) => (
-                <option key={trainingType} value={trainingType}>{trainingType}</option>
+              {subcampaignsList.map((subcampaign) => (
+                <option key={subcampaign} value={subcampaign}>{subcampaign}</option>
               ))}
             </select>
-          </div>
+          </div>}
 
           {/* Fecha Inicio */}
           <div className="space-y-1">
@@ -998,14 +1085,14 @@ export default function Encuestas({
         </div>
 
         {/* Clear Filters CTA */}
-        {(filterCampaign || filterGenerator || filterTrainer || filterType || dateStart || dateEnd) && (
+        {(filterCampaign || filterGenerator || filterTrainer || filterSubcampaign || dateStart || dateEnd) && (
           <div className="flex justify-end pt-1">
             <button
               onClick={() => {
                 setFilterCampaign('');
                 setFilterGenerator('');
                 setFilterTrainer('');
-                setFilterType('');
+                setFilterSubcampaign('');
                 setDateStart('');
                 setDateEnd('');
               }}
@@ -1082,8 +1169,24 @@ export default function Encuestas({
 
       {/* 4. TAB CONTENTS */}
 
-      {/* TAB 4.1: DASHBOARD & ANALYTICS */}
       {activeTab === 'dashboard' && (
+        <div className="space-y-6" id="dashboard-tab-content">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-xs"><span className="block text-[10px] text-slate-400 font-bold uppercase">Respuestas válidas</span><span className="text-xl font-black text-slate-800">{kpis.totalRespuestas}</span></div>
+            <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-xs"><span className="block text-[10px] text-slate-400 font-bold uppercase">Promedio general</span><span className="text-xl font-black text-slate-800">{kpis.averageGeneral_20 || '-'} <span className="text-xs text-slate-400">/20</span></span></div>
+            <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-xs"><span className="block text-[10px] text-slate-400 font-bold uppercase">Promedio porcentual</span><span className="text-xl font-black text-slate-800">{kpis.totalRespuestas ? Number((kpis.averageGeneral_20 / 20 * 100).toFixed(1)) : 0}%</span></div>
+          </div>
+          {dashboardResponses.length === 0 ? <div className="bg-slate-50 border border-dashed border-slate-200 p-12 text-center rounded-2xl text-xs font-bold text-slate-500">No se encontraron respuestas para los filtros aplicados.</div> : <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-xs"><h4 className="text-xs font-extrabold text-slate-800 mb-4">Comparativo por responsable</h4><div className="h-64"><ResponsiveContainer width="100%" height="100%"><BarChart data={responsibleData}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="name" fontSize={9} /><YAxis domain={[0, 20]} fontSize={10} /><Tooltip /><Bar dataKey="promedio" fill="#4f46e5" radius={[6, 6, 0, 0]} /></BarChart></ResponsiveContainer></div></div>
+            <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-xs"><h4 className="text-xs font-extrabold text-slate-800 mb-4">Distribución de notas</h4><div className="h-64"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={chartDistributionData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={82} label>{chartDistributionData.map((item) => <Cell key={item.name} fill={item.color} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer></div></div>
+            <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-xs overflow-x-auto"><h4 className="text-xs font-extrabold text-slate-800 mb-4">Mapa de calor por responsable</h4><table className="w-full text-xs"><thead><tr><th className="text-left p-2">Responsable</th>{Array.from({ length: 8 }, (_, index) => <th key={index} className="p-2">Q{index + 1}</th>)}</tr></thead><tbody>{heatmapData.map((row) => <tr key={row.name}><td className="p-2 font-bold">{row.name}</td>{row.values.map((value, index) => <td key={index} className="p-2 text-center" style={{ backgroundColor: `rgba(79,70,229,${value / 6})` }}>{value || '-'}</td>)}</tr>)}</tbody></table></div>
+            <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-xs"><h4 className="text-xs font-extrabold text-slate-800 mb-4">Distribución 1 a 5 por pregunta</h4><div className="h-64"><ResponsiveContainer width="100%" height="100%"><BarChart data={stackedQuestionData}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="question" fontSize={10} /><YAxis fontSize={10} /><Tooltip /><Legend />{['1', '2', '3', '4', '5'].map((key, index) => <Bar key={key} dataKey={key} stackId="answers" fill={['#ef4444', '#f59e0b', '#facc15', '#60a5fa', '#10b981'][index]} />)}</BarChart></ResponsiveContainer></div></div>
+          </div>}
+        </div>
+      )}
+
+      {/* TAB 4.1: DASHBOARD & ANALYTICS */}
+      {false && activeTab === 'dashboard' && (
         <div className="space-y-6" id="dashboard-tab-content">
           {/* KPI Cards Grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -1873,11 +1976,18 @@ export default function Encuestas({
             </div>
 
             <form onSubmit={handleCreateSurveySubmit} className="space-y-4 text-xs font-semibold">
+              <div className="space-y-1">
+                <label className="text-slate-500 font-bold block">Sección de encuesta</label>
+                <select value={createSurveyType} onChange={(event) => { setCreateSurveyType(event.target.value as SurveyType); setSelectedSessionId(''); setSelectedOjtModuleId(''); setTokenInput(''); }} className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs rounded-xl px-3 py-2.5 font-semibold outline-hidden focus:ring-1 focus:ring-fuchsia-500">
+                  <option value="inicial">Capacitación Inicial</option><option value="ojt">Acompañamiento OJT</option><option value="operaciones">Experiencia en Operaciones</option>
+                </select>
+              </div>
               {/* Select Capacitacion */}
               <div className="space-y-1">
                 <label className="text-slate-500 font-bold block">Selecciona Capacitación <span className="text-rose-500">*</span></label>
                 <select
-                  required
+                  required={createSurveyType === 'inicial'}
+                  disabled={createSurveyType !== 'inicial'}
                   value={selectedSessionId}
                   onChange={(e) => handleSelectSessionInModal(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs rounded-xl px-3 py-2.5 font-semibold outline-hidden focus:ring-1 focus:ring-fuchsia-500"
@@ -1893,6 +2003,10 @@ export default function Encuestas({
                   <p className="text-[10px] text-amber-600 italic mt-1 font-medium">Todas las capacitaciones cargadas actualmente ya tienen una encuesta de satisfacción vinculada.</p>
                 )}
               </div>
+
+              {createSurveyType === 'ojt' && <div className="space-y-1"><label className="text-slate-500 font-bold block">Grupo OJT <span className="text-rose-500">*</span></label><select required value={selectedOjtModuleId} onChange={(event) => { const id = event.target.value; setSelectedOjtModuleId(id); const group = ojtModules.find((module) => module.id === id); setTokenInput(group ? `OJT-${group.nombre}`.replace(/\s+/g, '-').toUpperCase() : ''); }} className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs rounded-xl px-3 py-2.5"><option value="">Selecciona...</option>{ojtModules.map((module) => <option key={module.id} value={module.id}>{module.nombre} · {module.formador_ojt_nombres.join(', ')}</option>)}</select></div>}
+
+              {createSurveyType === 'operaciones' && <div className="space-y-3"><label className="block text-slate-500 font-bold">Campaña <select required value={operationsCampaign} onChange={(event) => { setOperationsCampaign(event.target.value); setOperationsSupervisors([]); }} className="mt-1 w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5"><option value="">Selecciona...</option>{Object.keys(OPERATIONS_SUPERVISORS).map((campaign) => <option key={campaign}>{campaign}</option>)}</select></label><label className="block text-slate-500 font-bold">Subcampaña (opcional)<input value={operationsSubcampaign} onChange={(event) => setOperationsSubcampaign(event.target.value)} className="mt-1 w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5" /></label><div className="space-y-1"><span className="text-slate-500 font-bold">Supervisores habilitados</span>{availableOperationsSupervisors.map((name) => <label key={name} className="flex gap-2 text-slate-700"><input type="checkbox" checked={operationsSupervisors.includes(name)} onChange={(event) => setOperationsSupervisors((current) => event.target.checked ? [...current, name] : current.filter((item) => item !== name))} />{name}</label>)}</div></div>}
 
               {selectedSessionId && selectedSessionObj ? (
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3 animate-fade-in">
@@ -1984,7 +2098,7 @@ export default function Encuestas({
                 </button>
                 <button
                   type="submit"
-                  disabled={!selectedSessionId || isCreatingSurvey}
+                  disabled={(createSurveyType === 'inicial' ? !selectedSessionId : createSurveyType === 'ojt' ? !selectedOjtModuleId : !operationsCampaign || !operationsSupervisors.length) || isCreatingSurvey}
                   className="flex-1 bg-gradient-to-r from-fuchsia-600 to-indigo-600 hover:opacity-95 text-white font-bold rounded-xl py-3 cursor-pointer transition-transform shadow-md disabled:opacity-50 disabled:cursor-not-allowed text-center"
                 >
                   {isCreatingSurvey ? 'Guardando...' : 'Guardar Encuesta'}

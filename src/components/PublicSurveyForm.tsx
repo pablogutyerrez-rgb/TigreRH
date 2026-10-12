@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle2, ShieldCheck, Clipboard, Send, Star, HelpCi
 import BrandLogo from './BrandLogo';
 import { APP_NAME } from '../constants/app';
 import { formatPeruDate } from '../utils/time';
+import PublicSurveyV4Form from './PublicSurveyV4Form';
 import {
   getPublicSurveyContext,
   getPublicSurveyMetadata,
@@ -431,6 +432,17 @@ export default function PublicSurveyForm({
       </div>
     );
   };
+
+  if (surveyToken && remoteSurvey && (remoteSurvey.survey_type === 'ojt' || remoteSurvey.survey_type === 'operaciones')) {
+    return (
+      <PublicSurveyV4Form
+        surveyToken={surveyToken}
+        initialSurvey={remoteSurvey}
+        onAddResponse={onAddResponse}
+        onClose={onClosePublicSurvey}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-white flex items-center justify-center p-4" id="public-survey-container">
