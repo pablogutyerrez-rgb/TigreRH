@@ -1455,7 +1455,7 @@ export default function AttendanceControl({
                                    record.estado_asistencia === 'Faltó' ? 'Faltó' :
                                    record.estado_asistencia === 'Descanso médico' ? 'DM' :
                                    record.estado_asistencia === 'Feriado' ? 'Feriado' :
-                                   record.estado_asistencia === 'Baja' ? 'Baja' : 'Desistió'}
+                                   isPendingStatus(record.estado_asistencia) ? 'Pendiente' : record.estado_asistencia}
                                 </span>
                               ) : (
                                 <span className="text-slate-300">-</span>
@@ -1474,14 +1474,14 @@ export default function AttendanceControl({
                                       record.estado_asistencia === 'Baja' ? 'bg-orange-100 text-orange-800' :
                                       'bg-red-100 text-red-900'
                                     }`}>
-                                      {record.estado_asistencia}
+                                      {isPendingStatus(record.estado_asistencia) ? 'Pendiente' : record.estado_asistencia}
                                     </span>
                                   ) : (
                                     <span className="text-slate-300 italic">No marcado</span>
                                   )
                                 ) : (
                                   <select
-                                    value={record?.estado_asistencia || ''}
+                                    value={isPendingStatus(record?.estado_asistencia) ? '' : record!.estado_asistencia}
                                     onChange={(e) => handleStatusChange(part, dayNum, e.target.value as AttendanceStatus)}
                                     className={`text-[11px] font-bold rounded-lg p-1.5 border ${
                                       record?.estado_asistencia === 'Asistió' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
