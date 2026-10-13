@@ -51,7 +51,7 @@ import {
 import * as XLSX from 'xlsx';
 import { permissions } from '../utils/permissions';
 import { filterSurveys } from '../utils/surveyFilters';
-import { isSurveyEligibleParticipant } from '../utils/trainingProgress';
+import { findParticipantSurveyResponse, getSurveyParticipants } from '../utils/surveyCompletion';
 import { getSessionTrainerIds, getSessionTrainerNames, isSessionAssignedTrainer } from '../utils/trainingAssignments';
 
 const OPERATIONS_SUPERVISORS: Record<string, string[]> = {
@@ -184,16 +184,8 @@ export default function Encuestas({
   const normalizeFilterValue = (value?: string) =>
     (value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
 
-  const getSurveyEligibleParticipants = (survey: TrainingSurvey) => {
-    const sessionAttendance = attendance.filter(
-      (record) => record.training_session_id === survey.training_session_id,
-    );
-    return participants.filter(
-      (participant) =>
-        participant.training_session_id === survey.training_session_id &&
-        isSurveyEligibleParticipant(participant, sessionAttendance),
-    );
-  };
+  const getSurveyEligibleParticipants = (survey: TrainingSurvey) =>
+    getSurveyParticipants(survey, participants, attendance, sessions, ojtModules);
 
   const obfuscateDni = (dniVal: string) => {
     if (!dniVal) return '';
@@ -797,7 +789,7 @@ export default function Encuestas({
     );
 
     const mappedList = classParticipants.map(p => {
-      const resp = surveyResponses.find(r => r.dni.trim() === p.dni.trim());
+      const resp = findParticipantSurveyResponse(currentMonitoreoSurvey.id, p, surveyResponses);
       return {
         participant: p,
         hasResponded: !!resp,
@@ -815,7 +807,7 @@ export default function Encuestas({
       respondedCount,
       percentage
     };
-  }, [currentMonitoreoSurvey, participants, attendance, normalizedResponses]);
+  }, [currentMonitoreoSurvey, participants, attendance, sessions, ojtModules, normalizedResponses]);
 
   const handleCopyPersonalLink = (token: string, dniVal: string, pId: string) => {
     const origin = window.location.origin + window.location.pathname;

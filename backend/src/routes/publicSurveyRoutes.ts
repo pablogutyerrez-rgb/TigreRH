@@ -149,7 +149,14 @@ router.post('/:token/responses', async (req, res: Response) => {
   const participant = participantDoc.data(); const score = calculate(payload.data);
   const { dni, ...answers } = payload.data;
   const response = { id: `resp-${survey.id}-${participantDoc.id}`, training_survey_id: survey.id, survey_type: publicSurvey.survey_type, participant_id: participantDoc.id, dni, nombre_ejecutivo: `${participant.nombres || ''} ${participant.apellidos || ''}`.trim(), campaña: publicSurvey.campaña, campana: publicSurvey.campaña, codigo_generacion: publicSurvey.codigo_generacion, formador_id: publicSurvey.formador_id, formador_nombre: publicSurvey.formador_nombre, fecha_respuesta: new Date().toISOString(), ...answers, q9: 5, q10: 5, p1: payload.data.q1, p2: payload.data.q2, p3: payload.data.q3, p4: payload.data.q4, p5: payload.data.q5, p6: payload.data.q6, p7: payload.data.q7, p8: payload.data.q8, total_score: score.total_score, final_score_20: score.final_score_20, classification: score.classification, promedio_individual: Number((score.values.reduce((sum, value) => sum + value, 0) / 8).toFixed(2)) };
-  await adminDb.collection('responses').doc(response.id).create(response);
+  try {
+    await adminDb.collection('responses').doc(response.id).create(response);
+  } catch (error) {
+    if ((error as { code?: number }).code === 6) {
+      return void res.status(409).json({ message: 'Ya registraste esta encuesta de satisfacción.' });
+    }
+    throw error;
+  }
   res.status(201).json({ ok: true, response });
 });
 

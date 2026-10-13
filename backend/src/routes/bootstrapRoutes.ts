@@ -77,6 +77,7 @@ const canAccessSurveyLink = (
 router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
+    const surveyProgressOnly = req.query.scope === 'surveys';
     const canSeeAllSessions = [
       'Administrador',
       'Analista',
@@ -97,15 +98,15 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
       allResponses,
       allOjtModules,
     ] = await Promise.all([
-      readCollection('users'),
+      surveyProgressOnly ? [] : readCollection('users'),
       readCollection('sessions'),
-      readCollection('participants'),
-      readCollection('attendance'),
-      readCollection('confirmations'),
-      readCollection('reopens'),
-      readCollection('logs'),
-      readCollection('surveys'),
-      readCollection('responses'),
+      surveyProgressOnly ? [] : readCollection('participants'),
+      surveyProgressOnly ? [] : readCollection('attendance'),
+      surveyProgressOnly ? [] : readCollection('confirmations'),
+      surveyProgressOnly ? [] : readCollection('reopens'),
+      surveyProgressOnly ? [] : readCollection('logs'),
+      readCollection('surveys', surveyProgressOnly),
+      readCollection('responses', surveyProgressOnly),
       readCollection('ojt_modules'),
     ]);
 
@@ -185,6 +186,14 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
           response.classification === 'Critico' ? 'Crítico' : response.classification,
       };
     });
+
+    if (surveyProgressOnly) {
+      res.set('Cache-Control', 'no-store').json({
+        surveys,
+        responses: normalizedResponses.filter((response) => responseSurveyIds.has(String(response.training_survey_id))),
+      });
+      return;
+    }
 
     res.json({
       users:

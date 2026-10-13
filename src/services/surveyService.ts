@@ -1,6 +1,6 @@
 import { auth } from '../lib/firebase';
 import { getRuntimeEnv } from '../lib/runtimeConfig';
-import type { SurveyStatus, TrainingSurvey } from '../types';
+import type { SurveyResponse, SurveyStatus, TrainingSurvey } from '../types';
 
 const API_BASE_URL =
   getRuntimeEnv('VITE_API_BASE_URL') || (import.meta.env.PROD ? '' : 'http://localhost:8080');
@@ -9,6 +9,17 @@ const getAuthToken = async () => {
   const token = await auth?.currentUser?.getIdToken();
   if (!token) throw new Error('Sesion no disponible.');
   return token;
+};
+
+export const getSurveyProgressRemote = async () => {
+  const token = await getAuthToken();
+  const response = await fetch(`${API_BASE_URL}/api/bootstrap?scope=surveys`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: 'no-store',
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data) throw new Error(data?.message || 'No se pudieron sincronizar las encuestas.');
+  return data as { surveys: TrainingSurvey[]; responses: SurveyResponse[] };
 };
 
 export const createSurveyRemote = async (survey: TrainingSurvey) => {

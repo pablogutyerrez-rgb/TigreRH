@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   User,
   UserArea,
@@ -102,7 +102,7 @@ import {
   persistParticipant,
   persistReopenRequest,
 } from './services/operationService';
-import { createSurveyRemote, updateSurveyLinkAssignmentsRemote, updateSurveyStatusRemote } from './services/surveyService';
+import { createSurveyRemote, getSurveyProgressRemote, updateSurveyLinkAssignmentsRemote, updateSurveyStatusRemote } from './services/surveyService';
 import { APP_NAME } from './constants/app';
 import loginBackgroundVideo from './assets/login-background.mp4';
 import { getBusinessDayDate, getSessionDayDate, getTrainingDays, getTrainingDaysCount } from './utils/trainingDays';
@@ -804,6 +804,43 @@ export default function App() {
     );
   };
 
+  const refreshSurveyProgress = useCallback(async () => {
+    const data = await getSurveyProgressRemote();
+    setSurveys(data.surveys);
+    setResponses(data.responses);
+    return data;
+  }, []);
+
+  useEffect(() => {
+    if (!activeUser || !platformLoaded || urlView === 'survey' ||
+      !['encuestas', 'capacitaciones', 'asistencia'].includes(currentView)) return;
+    let cancelled = false;
+    let pending = false;
+    const refresh = async () => {
+      if (pending || document.visibilityState !== 'visible') return;
+      pending = true;
+      try {
+        const data = await getSurveyProgressRemote();
+        if (!cancelled) {
+          setSurveys(data.surveys);
+          setResponses(data.responses);
+        }
+      } catch (error) {
+        if (!cancelled) console.error('Error syncing survey progress:', error);
+      } finally {
+        pending = false;
+      }
+    };
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 15_000);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [activeUser, platformLoaded, currentView, urlView]);
+
   // --- Satisfaction Survey State Modifiers ---
   const handleUpdateSurveyStatus = async (surveyId: string, status: SurveyStatus) => {
     const survey = surveys.find((item) => item.id === surveyId);
@@ -965,7 +1002,9 @@ export default function App() {
       return s;
     }));
 
-    void updateTraining(sessionId, { estado: 'Capacitación cerrada' }).catch((error) => {
+    void updateTraining(sessionId, { estado: 'Capacitación cerrada' }).then(() => {
+      void refreshSurveyProgress().catch((error) => console.error('Error syncing survey progress:', error));
+    }).catch((error) => {
       console.error('Error closing training:', error);
       alert(error instanceof Error ? error.message : 'No se pudo guardar el cierre de la capacitación.');
     });
@@ -2513,6 +2552,7 @@ export default function App() {
                     onUpdateOjtModule={handleUpdateOjtModule}
                     onDeleteOjtModule={handleDeleteOjtModule}
                     onCloseCampaign={handleCloseCampaign}
+                    onRefreshSurveyProgress={refreshSurveyProgress}
                     onUpdateSession={handleUpdateSession}
                     onAppendParticipants={handleAppendParticipants}
                   />
@@ -2563,6 +2603,7 @@ export default function App() {
                   onUpdateOjtModule={handleUpdateOjtModule}
                   onDeleteOjtModule={handleDeleteOjtModule}
                   onCloseCampaign={handleCloseCampaign}
+                  onRefreshSurveyProgress={refreshSurveyProgress}
                   onUpdateSession={handleUpdateSession}
                   onAppendParticipants={handleAppendParticipants}
                   onAuditLog={addAuditLog}

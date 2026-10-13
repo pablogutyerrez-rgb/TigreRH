@@ -30,6 +30,7 @@ import {
 import { TrainingSession, OjtModule, Participant, User as AppUser, AttendanceStatus, AttendanceRecord, TrainingSurvey, SurveyResponse, OperationConfirmation } from '../types';
 import { buildTrainingWorkbook } from '../utils/trainingExport';
 import { permissions } from '../utils/permissions';
+import { findParticipantSurveyResponse } from '../utils/surveyCompletion';
 import { getBusinessDayDate, getTrainingDays, getTrainingDaysCount } from '../utils/trainingDays';
 import { BPO_CAMPAIGNS, getCampaignPrefix, normalizeCampaignName } from '../constants/campaigns';
 import {
@@ -59,6 +60,7 @@ interface CapacitacionesProps {
   onUpdateOjtModule?: (moduleId: string, changes: Partial<OjtModule>) => Promise<void>;
   onDeleteOjtModule?: (moduleId: string) => Promise<void>;
   onCloseCampaign?: (sessionId: string) => void;
+  onRefreshSurveyProgress?: () => Promise<{ surveys: TrainingSurvey[]; responses: SurveyResponse[] }>;
   onUpdateSession?: (sessionId: string, updatedFields: Partial<TrainingSession>) => void;
   onAppendParticipants?: (
     sessionId: string,
@@ -194,6 +196,7 @@ export default function Capacitaciones({
   onUpdateOjtModule,
   onDeleteOjtModule,
   onCloseCampaign,
+  onRefreshSurveyProgress,
   onUpdateSession,
   onAppendParticipants,
   onAuditLog
@@ -325,7 +328,7 @@ export default function Capacitaciones({
     });
 
     // Condition 3: Encuesta de satisfacción completada
-    const survey = surveys.find(s => s.training_session_id === sessionId);
+    const survey = surveys.find(s => s.training_session_id === sessionId && (s.survey_type || 'inicial') === 'inicial' && s.estado !== 'Eliminada');
     const surveyCreated = !!survey;
     const surveyEnabledOrClosed = survey ? (survey.estado === 'Habilitada' || survey.estado === 'Cerrada') : false;
     const surveyLinkGenerated = survey ? !!survey.token : false;
@@ -334,9 +337,7 @@ export default function Capacitaciones({
       a.participant_id === p.id && a.training_session_id === sessionId && a.dia === 5
     );
 
-    const hasResponded = (p: Participant) => !!survey && responses.some(r =>
-      r.training_survey_id === survey.id && (r.participant_id === p.id || r.dni === p.dni)
-    );
+    const hasResponded = (p: Participant) => !!survey && !!findParticipantSurveyResponse(survey.id, p, responses);
 
     const habilitados = sessionParts.filter(isHabilitado);
     const respondieron = habilitados.filter(hasResponded);
@@ -361,7 +362,14 @@ export default function Capacitaciones({
   }, [sessionToClose, participants, attendance, surveys, responses, sessionParts]);
 
   // Initiate close routine
-  const handleInitiateClose = (session: TrainingSession) => {
+  const handleInitiateClose = async (session: TrainingSession) => {
+    let progress = { surveys, responses };
+    try {
+      if (onRefreshSurveyProgress) progress = await onRefreshSurveyProgress();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'No se pudieron sincronizar las encuestas.');
+      return;
+    }
     setSessionToClose(session);
 
     const sParts = participants.filter(p => p.training_session_id === session.id);
@@ -392,14 +400,12 @@ export default function Capacitaciones({
       return true;
     });
 
-    const survey = surveys.find(s => s.training_session_id === session.id);
+    const survey = progress.surveys.find(s => s.training_session_id === session.id && (s.survey_type || 'inicial') === 'inicial' && s.estado !== 'Eliminada');
     const isHabilitado = (p: Participant) => attendance.some(a =>
       a.participant_id === p.id && a.training_session_id === session.id && a.dia === 5
     );
     const habilitados = sParts.filter(isHabilitado);
-    const pendientes = habilitados.filter(p => !survey || !responses.some(r =>
-      r.training_survey_id === survey.id && (r.participant_id === p.id || r.dni === p.dni)
-    ));
+    const pendientes = habilitados.filter(p => !survey || !findParticipantSurveyResponse(survey.id, p, progress.responses));
     const isSurveyComplete = !!survey && (survey.estado === 'Habilitada' || survey.estado === 'Cerrada') && pendientes.length === 0 && habilitados.length > 0;
 
     const isAptosDefined = sParts.length > 0 && sParts.some(p => p.resultado_formacion === 'Apto' || p.resultado_formacion === 'No apto');
