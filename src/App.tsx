@@ -2086,7 +2086,10 @@ export default function App() {
     const saved = await assignOjt(sessionId);
     setSessions((current) => current.map((item) => item.id === sessionId ? saved.session : item));
     setOjtModules((current) => [saved.module, ...current.filter((item) => item.id !== saved.module.id)]);
-    setPlatformReloadKey((value) => value + 1);
+    setAttendance((current) => {
+      const savedIds = new Set(saved.attendance.map((record) => record.id));
+      return [...current.filter((record) => !savedIds.has(record.id)), ...saved.attendance];
+    });
   };
 
   const handleUpdateOjtModule = async (moduleId: string, changes: Partial<OjtModule>) => {

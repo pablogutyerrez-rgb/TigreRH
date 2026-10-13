@@ -5,6 +5,7 @@ import { ensureHybridSchema } from '../hybridDb.js';
 import { getPostgresPool } from '../postgres.js';
 import { randomUUID } from 'node:crypto';
 import { getScheduledTrainingDays, hasCampaignOjt, isBusinessDate, isInitialAttendanceComplete } from '../services/trainingSchedule.js';
+import { isOperationalOjtClosed } from '../services/attendancePolicy.js';
 import {
   type AuthenticatedRequest,
   requireAuth,
@@ -38,7 +39,7 @@ const getTrainingCode = (session: Record<string, unknown>) =>
 const getOjtGroup = (campaign: string) => {
   if (!hasCampaignOjt(campaign)) return null;
   if (['Entel Empresas RUC 10', 'Entel Empresas RUC 20', 'GPON'].includes(campaign)) return 'Entel';
-  if (campaign === 'Culqi') return 'Culqi';
+  if (campaign.trim().toLowerCase() === 'culqi') return 'Culqi';
   if (campaign === 'Equifax' || campaign === 'Fija') return 'Equifax';
   if (campaign === 'Tigre Academy') return 'Tigre Academy';
   return null;
@@ -68,8 +69,9 @@ router.post('/:sessionId/assign-ojt', requireAuth, async (req: AuthenticatedRequ
     if (!session) throw Object.assign(new Error('Capacitacion no encontrada.'), { status: 404 });
     const group = getOjtGroup(String(session.campaña || ''));
     if (!group) throw Object.assign(new Error('Esta campana no tiene grupo OJT asignado.'), { status: 400 });
+    if (isOperationalOjtClosed(session)) throw Object.assign(new Error('La capacitacion esta cerrada. No se puede asignar OJT.'), { status: 409 });
     const initialIds = Array.isArray(session.formador_capacitacion_inicial_ids)
-      ? session.formador_capacitacion_inicial_ids : [session.formador_id];
+      ? session.formador_capacitacion_inicial_ids : [...(session.formador_ids || []), session.formador_id];
     if (req.user!.rol !== 'Administrador' &&
       !(['Formador', 'Analista'].includes(req.user!.rol) && initialIds.includes(req.user!.uid))) {
       throw Object.assign(new Error('Solo el formador inicial asignado o Admin puede asignar OJT.'), { status: 403 });
@@ -86,11 +88,11 @@ router.post('/:sessionId/assign-ojt', requireAuth, async (req: AuthenticatedRequ
     );
     if (participants.rows.length === 0) throw Object.assign(new Error('No hay participantes en esta capacitacion.'), { status: 400 });
     const initialAttendance = await client.query(
-      `SELECT payload FROM tigre_rh.current_documents WHERE collection_name = 'attendance' AND payload->>'training_session_id' = $1 AND is_deleted = FALSE`,
+      `SELECT document_id, payload FROM tigre_rh.current_documents WHERE collection_name = 'attendance' AND payload->>'training_session_id' = $1 AND is_deleted = FALSE`,
       [req.params.sessionId],
     );
     if (!isInitialAttendanceComplete(req.params.sessionId,
-      participants.rows.map((row: { document_id: string }) => ({ id: row.document_id })),
+      participants.rows.map((row: { document_id: string; payload: Record<string, unknown> }) => ({ id: row.document_id, estado_final: row.payload.estado_final })),
       initialAttendance.rows.map((row: { payload: any }) => row.payload))) {
       throw Object.assign(new Error('Completa las asistencias de los dias 1 al 5 para todos los participantes.'), { status: 409 });
     }
@@ -102,13 +104,35 @@ router.post('/:sessionId/assign-ojt', requireAuth, async (req: AuthenticatedRequ
       : await client.query(`SELECT payload FROM tigre_rh.current_documents WHERE collection_name = 'ojt_modules' AND payload->>'grupo' = $1 AND payload->>'estado' = 'Abierto' AND is_deleted = FALSE ORDER BY created_at, document_id LIMIT 1 FOR UPDATE`, [group]);
     const previous = existing.rows[0]?.payload as Record<string, any> | undefined;
     if (session.ojt_module_id && !previous) throw Object.assign(new Error('El modulo OJT asignado no existe.'), { status: 409 });
+    if (isOperationalOjtClosed(session, previous?.estado)) throw Object.assign(new Error('El modulo OJT esta cerrado.'), { status: 409 });
+    const timestamp = new Date().toISOString();
+    const ojtAttendance = initialAttendance.rows.filter((row: { payload: any }) => Number(row.payload.dia) >= 6 && Number(row.payload.dia) <= 10)
+      .map((row: { document_id: string; payload: any }) => ({ ...row.payload, id: row.document_id }));
+    const attendanceKeys = new Set(ojtAttendance.map((record: any) => `${record.participant_id}:${Number(record.dia)}`));
+    if (session.training_model === 'split_ojt' || group === 'Culqi') {
+      const missingRecords = eligibleIds.flatMap((participantId: string) => [6, 7, 8, 9, 10]
+        .filter((day) => !attendanceKeys.has(`${participantId}:${day}`)).map((day) => ({
+          id: `ojt-${participantId}-${day}`, participant_id: participantId, training_session_id: session.id, dia: day,
+          fecha: businessDay(session.fecha_inicio, day), estado_asistencia: 'Seleccionar',
+          registrado_por: req.user!.uid, fecha_registro: timestamp,
+        })));
+      if (missingRecords.length) {
+        const inserted = await client.query(
+          `INSERT INTO tigre_rh.current_documents (collection_name, document_id, document_path, payload, source_payload, is_deleted)
+           SELECT 'attendance', record->>'id', 'attendance/' || (record->>'id'), record, record, FALSE
+           FROM jsonb_array_elements($1::jsonb) AS record
+           ON CONFLICT (collection_name, document_id) DO NOTHING RETURNING document_id, payload`,
+          [JSON.stringify(missingRecords)],
+        );
+        ojtAttendance.push(...inserted.rows.map((row: { document_id: string; payload: any }) => ({ ...row.payload, id: row.document_id })));
+      }
+    }
     if (session.ojt_module_id && previous) {
       await client.query('COMMIT');
-      res.json({ module: previous, session });
+      res.json({ module: previous, session, attendance: ojtAttendance });
       return;
     }
     if (!session.ojt_module_id && previous?.generation_ids?.includes(session.id)) throw Object.assign(new Error('La generacion ya pertenece a un modulo OJT.'), { status: 409 });
-    const timestamp = new Date().toISOString();
     const moduleId = previous?.id || `ojt-${randomUUID()}`;
     const moduleData = {
       ...(previous || {}), id: moduleId, grupo: group, nombre: previous?.nombre || `OJT ${group}`,
@@ -140,26 +164,8 @@ router.post('/:sessionId/assign-ojt', requireAuth, async (req: AuthenticatedRequ
       `UPDATE tigre_rh.current_documents SET payload = $2::jsonb, source_payload = $2::jsonb, updated_at = NOW() WHERE collection_name = 'sessions' AND document_id = $1`,
       [session.id, JSON.stringify(assigned)],
     );
-    if (session.training_model === 'split_ojt' && !session.ojt_module_id) {
-      for (const participantId of eligibleIds) {
-        for (let day = 6; day <= 10; day += 1) {
-          const id = `ojt-${participantId}-${day}`;
-          const record = {
-            id, participant_id: participantId, training_session_id: session.id, dia: day,
-            fecha: businessDay(session.fecha_inicio, day), estado_asistencia: 'Seleccionar',
-            registrado_por: req.user!.uid, fecha_registro: timestamp,
-          };
-          await client.query(
-            `INSERT INTO tigre_rh.current_documents (collection_name, document_id, document_path, payload, source_payload, is_deleted)
-             VALUES ('attendance', $1, 'attendance/' || $1, $2::jsonb, $2::jsonb, FALSE)
-             ON CONFLICT (collection_name, document_id) DO NOTHING`,
-            [id, JSON.stringify(record)],
-          );
-        }
-      }
-    }
     await client.query('COMMIT');
-    res.json({ module: moduleData, session: assigned });
+    res.json({ module: moduleData, session: assigned, attendance: ojtAttendance });
   } catch (error) {
     await client.query('ROLLBACK');
     const failure = error as Error & { status?: number };

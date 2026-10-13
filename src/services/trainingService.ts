@@ -63,6 +63,7 @@ export const assignOjt = (sessionId: string) =>
   request(`/api/trainings/${sessionId}/assign-ojt`, { method: 'POST' }) as Promise<{
     module: OjtModule;
     session: TrainingSession;
+    attendance: AttendanceRecord[];
   }>;
 
 export const updateOjtModule = (moduleId: string, changes: Partial<Pick<OjtModule, 'nombre' | 'estado' | 'hora_capacitacion' | 'turno' | 'modalidad'>>) =>

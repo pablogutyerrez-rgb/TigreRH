@@ -16,9 +16,10 @@ export const isBusinessDate = (value: string) => {
 
 export const isInitialAttendanceComplete = (
   sessionId: string,
-  participants: Array<{ id: string }>,
+  participants: Array<{ id: string; estado_final?: unknown }>,
   records: Array<{ participant_id: string; training_session_id: string; dia: number; estado_asistencia: string }>,
 ) => participants.length > 0 && participants.every((participant) => {
+  if (participant.estado_final === 'Desistió') return true;
   const attendance = records.filter((record) => record.participant_id === participant.id && record.training_session_id === sessionId);
   return [1, 2, 3, 4, 5].every((day) => attendance.some((record) =>
     (Number(record.dia) === day && ['Asistió', 'Tardanza', 'Faltó', 'Descanso médico', 'Feriado', 'Desistió', 'Baja'].includes(record.estado_asistencia)) ||

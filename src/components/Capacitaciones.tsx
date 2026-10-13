@@ -31,6 +31,7 @@ import { TrainingSession, OjtModule, Participant, User as AppUser, AttendanceSta
 import { buildTrainingWorkbook } from '../utils/trainingExport';
 import { permissions } from '../utils/permissions';
 import { getScheduledTrainingDays, hasCampaignOjt, isBusinessDate, isInitialAttendanceComplete } from '../../backend/src/services/trainingSchedule';
+import { isOperationalOjtClosed } from '../../backend/src/services/attendancePolicy';
 import { findParticipantSurveyResponse } from '../utils/surveyCompletion';
 import { getBusinessDayDate, getTrainingDays, getTrainingDaysCount } from '../utils/trainingDays';
 import { BPO_CAMPAIGNS, getCampaignPrefix, normalizeCampaignName } from '../constants/campaigns';
@@ -1591,7 +1592,9 @@ export default function Capacitaciones({
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredSessions.map((session) => {
                 // Count participants for this session
-                const sessionPartsCount = participants.filter(p => p.training_session_id === session.id).length;
+                const sessionParts = participants.filter(p => p.training_session_id === session.id);
+                const sessionPartsCount = sessionParts.length;
+                const initialComplete = isInitialAttendanceComplete(session.id, sessionParts, attendance);
 
                 return (
                   <div
@@ -1674,10 +1677,12 @@ export default function Capacitaciones({
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {onAssignOjt && !session.ojt_module_id &&
                           hasCampaignOjt(session.campaña) &&
+                          !isOperationalOjtClosed(session) &&
                           (currentUser.rol === 'Administrador' || (['Formador', 'Analista'].includes(currentUser.rol) && isSessionInitialTrainer(session, currentUser.id))) &&
-                          !currentUser.module_view_only?.includes('formacion:capacitaciones') &&
-                          isInitialAttendanceComplete(session.id, participants.filter((part) => part.training_session_id === session.id), attendance) && (
-                          <button type="button" disabled={assigningOjtId === session.id} onClick={async () => {
+                          !currentUser.module_view_only?.includes('formacion:capacitaciones') && (
+                          <button type="button" disabled={assigningOjtId === session.id || !initialComplete}
+                            title={initialComplete ? 'Asignar OJT y habilitar D6-D10' : 'Completa las asistencias D1-D5 de los participantes activos para habilitar OJT'}
+                            onClick={async () => {
                             setAssigningOjtId(session.id);
                             try { await onAssignOjt(session.id); }
                             catch (error) { alert(error instanceof Error ? error.message : 'No se pudo asignar OJT.'); }
