@@ -1,4 +1,6 @@
 import type { TrainingSession } from '../types';
+import { getScheduledTrainingDays } from '../../backend/src/services/trainingSchedule';
+import { isOperationalOjtClosed } from '../../backend/src/services/attendancePolicy';
 
 type TrainerAssignmentSession = Pick<TrainingSession,
   | 'formador_id'
@@ -71,3 +73,8 @@ export const isSessionInitialTrainer = (session: TrainerAssignmentSession, userI
 
 export const isSessionOjtTrainer = (session: TrainerAssignmentSession, userId?: string) =>
   Boolean(userId && getSessionOjtTrainerIds(session).includes(userId));
+
+export const canViewOperationalOjt = (session: TrainingSession, user: { id: string; rol: string }, moduleStatus?: string) =>
+  user.rol !== 'Formador' || (getScheduledTrainingDays(session.campaña) === 10
+    ? isSessionOjtTrainer(session, user.id) && !isOperationalOjtClosed(session, moduleStatus)
+    : isSessionAssignedTrainer(session, user.id));

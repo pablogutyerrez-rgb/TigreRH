@@ -1,3 +1,5 @@
+import { isAttendanceMinutesOpen } from '../../backend/src/services/attendancePolicy';
+
 const TIMEZONE = "America/Lima";
 
 export function getPeruNow() {
@@ -31,16 +33,12 @@ export function getPeruNow() {
   };
 }
 
-export function isAttendanceWindowOpen(userRole: string, hasApprovedReopen = false) {
+export function isAttendanceWindowOpen(userRole: string, hasApprovedReopen = false, currentMinutes = getPeruNow().currentMinutes) {
   if (userRole === "Administrador") return true;
 
   if (hasApprovedReopen) return true;
 
-  const peruNow = getPeruNow();
-  const start = 9 * 60;
-  const end = 9 * 60 + 30;
-
-  return peruNow.currentMinutes >= start && peruNow.currentMinutes <= end;
+  return isAttendanceMinutesOpen(currentMinutes);
 }
 
 export function formatPeruDate(date: Date) {

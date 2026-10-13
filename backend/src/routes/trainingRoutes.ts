@@ -4,6 +4,7 @@ import { dataDb as adminDb } from '../hybridDb.js';
 import { ensureHybridSchema } from '../hybridDb.js';
 import { getPostgresPool } from '../postgres.js';
 import { randomUUID } from 'node:crypto';
+import { getScheduledTrainingDays, hasCampaignOjt, isBusinessDate, isInitialAttendanceComplete } from '../services/trainingSchedule.js';
 import {
   type AuthenticatedRequest,
   requireAuth,
@@ -35,6 +36,7 @@ const getTrainingCode = (session: Record<string, unknown>) =>
   String(session.generation_code || session.nombre_generacion || '').trim();
 
 const getOjtGroup = (campaign: string) => {
+  if (!hasCampaignOjt(campaign)) return null;
   if (['Entel Empresas RUC 10', 'Entel Empresas RUC 20', 'GPON'].includes(campaign)) return 'Entel';
   if (campaign === 'Culqi') return 'Culqi';
   if (campaign === 'Equifax' || campaign === 'Fija') return 'Equifax';
@@ -83,15 +85,14 @@ router.post('/:sessionId/assign-ojt', requireAuth, async (req: AuthenticatedRequ
       [req.params.sessionId],
     );
     if (participants.rows.length === 0) throw Object.assign(new Error('No hay participantes en esta capacitacion.'), { status: 400 });
-    const dayFive = await client.query(
-      `SELECT payload FROM tigre_rh.current_documents WHERE collection_name = 'attendance' AND payload->>'training_session_id' = $1 AND payload->>'dia' = '5' AND is_deleted = FALSE`,
+    const initialAttendance = await client.query(
+      `SELECT payload FROM tigre_rh.current_documents WHERE collection_name = 'attendance' AND payload->>'training_session_id' = $1 AND is_deleted = FALSE`,
       [req.params.sessionId],
     );
-    const registered = new Map<string, string>(dayFive.rows.map((row: { payload: Record<string, unknown> }) =>
-      [String(row.payload.participant_id), String(row.payload.estado_asistencia || '')]));
-    if (participants.rows.some((row: { document_id: string }) =>
-      !registered.has(row.document_id) || ['Seleccionar', 'Pendiente', ''].includes(registered.get(row.document_id) || ''))) {
-      throw Object.assign(new Error('Registra la asistencia del dia 5 para todos los participantes.'), { status: 409 });
+    if (!isInitialAttendanceComplete(req.params.sessionId,
+      participants.rows.map((row: { document_id: string }) => ({ id: row.document_id })),
+      initialAttendance.rows.map((row: { payload: any }) => row.payload))) {
+      throw Object.assign(new Error('Completa las asistencias de los dias 1 al 5 para todos los participantes.'), { status: 409 });
     }
     const eligibleIds = participants.rows.map((row: { document_id: string }) => row.document_id);
     if (eligibleIds.length === 0) throw Object.assign(new Error('No hay participantes habilitados para OJT.'), { status: 409 });
@@ -244,11 +245,11 @@ router.post('/', canManageTraining, async (req: AuthenticatedRequest, res: Respo
 
   const { survey, participants, attendance } = parsed.data;
   const start = String(parsed.data.session.fecha_inicio || '');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || [0, 6].includes(new Date(`${start}T12:00:00`).getDay())) {
+  if (!isBusinessDate(start)) {
     res.status(400).json({ message: 'La capacitacion debe iniciar de lunes a viernes.' });
     return;
   }
-  const session = { ...parsed.data.session, training_days: 5, training_model: 'split_ojt', fecha_fin: businessDay(start, 5) };
+  const session = { ...parsed.data.session, training_days: 5, training_model: 'split_ojt', fecha_fin: businessDay(start, getScheduledTrainingDays(parsed.data.session.campaña)) };
   const participantIds = new Set(participants.map((participant) => String(participant.id)));
   const initialAttendance: InitialAttendanceRecord[] = attendance
     .filter((record) => {
@@ -299,6 +300,10 @@ router.patch('/:sessionId', canPatchTraining, async (req: AuthenticatedRequest, 
     return;
   }
   delete changes.data.id;
+  if (['fecha_inicio', 'fecha_fin'].some((field) => changes.data[field] !== undefined && !isBusinessDate(String(changes.data[field])))) {
+    res.status(400).json({ message: 'Las fechas de capacitacion deben ser validas y de lunes a viernes.' });
+    return;
+  }
   if (changes.data.estado && req.user!.rol !== 'Administrador') {
     const current = await adminDb.collection('sessions').doc(req.params.sessionId).get();
     const oldStatus = String(current.data()?.estado || '');

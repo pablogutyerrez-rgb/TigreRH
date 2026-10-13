@@ -78,6 +78,7 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
   try {
     const user = req.user!;
     const surveyProgressOnly = req.query.scope === 'surveys';
+    const trainingProgressOnly = req.query.scope === 'training';
     const canSeeAllSessions = [
       'Administrador',
       'Analista',
@@ -98,16 +99,16 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
       allResponses,
       allOjtModules,
     ] = await Promise.all([
-      surveyProgressOnly ? [] : readCollection('users'),
-      readCollection('sessions'),
-      surveyProgressOnly ? [] : readCollection('participants'),
-      surveyProgressOnly ? [] : readCollection('attendance'),
-      surveyProgressOnly ? [] : readCollection('confirmations'),
-      surveyProgressOnly ? [] : readCollection('reopens'),
-      surveyProgressOnly ? [] : readCollection('logs'),
-      readCollection('surveys', surveyProgressOnly),
-      readCollection('responses', surveyProgressOnly),
-      readCollection('ojt_modules'),
+      surveyProgressOnly || trainingProgressOnly ? [] : readCollection('users'),
+      readCollection('sessions', trainingProgressOnly),
+      surveyProgressOnly ? [] : readCollection('participants', trainingProgressOnly),
+      surveyProgressOnly ? [] : readCollection('attendance', trainingProgressOnly),
+      surveyProgressOnly ? [] : readCollection('confirmations', trainingProgressOnly),
+      surveyProgressOnly || trainingProgressOnly ? [] : readCollection('reopens'),
+      surveyProgressOnly || trainingProgressOnly ? [] : readCollection('logs'),
+      trainingProgressOnly ? [] : readCollection('surveys', surveyProgressOnly),
+      trainingProgressOnly ? [] : readCollection('responses', surveyProgressOnly),
+      readCollection('ojt_modules', trainingProgressOnly),
     ]);
 
     const sessions = canSeeAllSessions
@@ -124,6 +125,16 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
     const participantIds = new Set(
       participants.map((participant) => String(participant.id)),
     );
+    if (trainingProgressOnly) {
+      res.set('Cache-Control', 'no-store').json({
+        sessions, participants,
+        attendance: allAttendance.filter((record) => sessionIds.has(String(record.training_session_id)) || participantIds.has(String(record.participant_id))),
+        confirmations: allConfirmations.filter((record) => sessionIds.has(String(record.training_session_id))),
+        ojt_modules: allOjtModules.filter((module) => user.rol === 'Administrador' ||
+          (Array.isArray(module.generation_ids) && module.generation_ids.some((id) => sessionIds.has(String(id))))),
+      });
+      return;
+    }
     const accessibleOjtModuleIds = new Set(
       allOjtModules
         .filter((module) => Array.isArray(module.generation_ids) && module.generation_ids.some((id) => sessionIds.has(String(id))))
@@ -134,7 +145,7 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
       accessibleOjtModuleIds.has(String(survey.ojt_module_id || '')) ||
       (survey.survey_type === 'operaciones' && canSeeAllSessions);
     const scopedSurveys = allSurveys.filter(canAccessSurvey);
-    const surveysById = new Map(allSurveys.map((survey) => [String(survey.id), survey]));
+    const surveysById = new Map<string, Record<string, unknown>>(allSurveys.map((survey) => [String(survey.id), survey] as const));
     const sessionsById = new Map(allSessions.map((session) => [String(session.id), session]));
     const assignedSurveyIds = new Set(
       allSurveys

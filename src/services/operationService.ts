@@ -5,20 +5,28 @@ import type { AttendanceRecord, AttendanceReopenRequest, OperationConfirmation, 
 const API_BASE_URL =
   getRuntimeEnv('VITE_API_BASE_URL') || (import.meta.env.PROD ? '' : 'http://localhost:8080');
 
+let pendingWrites = 0;
+export const hasPendingOperationWrites = () => pendingWrites > 0;
+
 const save = async <T = void>(path: string, body: unknown): Promise<T> => {
-  const token = await auth?.currentUser?.getIdToken();
-  if (!token) throw new Error('Sesion no disponible.');
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  });
-  const data = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(data?.message || 'No se pudo guardar el registro.');
-  return data as T;
+  pendingWrites += 1;
+  try {
+    const token = await auth?.currentUser?.getIdToken();
+    if (!token) throw new Error('Sesion no disponible.');
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(data?.message || 'No se pudo guardar el registro.');
+    return data as T;
+  } finally {
+    pendingWrites -= 1;
+  }
 };
 
 const post = async <T>(path: string, body: unknown, forceTokenRefresh = false): Promise<T> => {

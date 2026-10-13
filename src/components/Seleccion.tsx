@@ -440,6 +440,25 @@ export default function Seleccion({ currentUser, users, initialView = 'dashboard
   }, []);
 
   useEffect(() => {
+    if (saving) return;
+    let cancelled = false;
+    let pending = false;
+    const refresh = async () => {
+      if (pending || document.visibilityState !== 'visible') return;
+      pending = true;
+      try {
+        const data = await getSelectionBootstrap();
+        if (!cancelled) setApplicants(data.applicants || []);
+      } catch (error) {
+        if (!cancelled) console.error('Error sincronizando postulantes:', error);
+      } finally { pending = false; }
+    };
+    const interval = window.setInterval(() => void refresh(), 5_000);
+    document.addEventListener('visibilitychange', refresh);
+    return () => { cancelled = true; window.clearInterval(interval); document.removeEventListener('visibilitychange', refresh); };
+  }, [saving]);
+
+  useEffect(() => {
     setActiveView(initialView);
   }, [initialView]);
 

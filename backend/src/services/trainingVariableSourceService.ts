@@ -1,4 +1,5 @@
 import { calculatePhaseMetrics } from './trainingPhaseMetrics.js';
+import { isToolsDropout } from './attendancePolicy.js';
 import { dataDb as adminDb } from '../hybridDb.js';
 
 type StoredRecord = Record<string, unknown> & { id: string };
@@ -50,6 +51,7 @@ const EXCLUDENT_DESERTION_REASONS = new Set([
   'problemasdehorario', 'problemaspersonales', 'problemasdesalud', 'desistimientovoluntario',
 ]);
 const isExcludentDesertion = (record: StoredRecord) =>
+  isToolsDropout(record) ||
   normalizeStatusKey(record.estado_asistencia) === 'desistio' &&
   EXCLUDENT_DESERTION_REASONS.has(normalizeStatusKey(record.motivo_desercion));
 const normalizeIds = (value: unknown) => Array.isArray(value)

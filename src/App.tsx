@@ -83,7 +83,7 @@ import {
   deactivatePlatformUser,
   updatePlatformUser,
 } from './services/firebase/userAdminService';
-import { getBootstrapData } from './services/bootstrapService';
+import { getBootstrapData, getTrainingProgress } from './services/bootstrapService';
 import {
   appendTrainingParticipants,
   assignOjt,
@@ -97,6 +97,7 @@ import {
   deleteParticipantRemote,
   getReopenRequestsRemote,
   persistAttendance,
+  hasPendingOperationWrites,
   persistAttendanceBatch,
   persistConfirmation,
   persistParticipant,
@@ -104,6 +105,8 @@ import {
 } from './services/operationService';
 import { createSurveyRemote, getSurveyProgressRemote, updateSurveyLinkAssignmentsRemote, updateSurveyStatusRemote } from './services/surveyService';
 import { APP_NAME } from './constants/app';
+import { getScheduledTrainingDays, isInitialOnlyCampaign } from '../backend/src/services/trainingSchedule';
+import { isOperationalOjtClosed } from '../backend/src/services/attendancePolicy';
 import loginBackgroundVideo from './assets/login-background.mp4';
 import { getBusinessDayDate, getSessionDayDate, getTrainingDays, getTrainingDaysCount } from './utils/trainingDays';
 
@@ -305,14 +308,15 @@ export default function App() {
         const recordsByDay = attendanceByParticipantSession.get(`${p.id}\u0000${p.training_session_id}`);
         const activeConfirmation = confirmationByParticipant.get(p.id);
         
-        const trackedDays = session?.training_model === 'split_ojt' && session.ojt_module_id
+        const requiresOjt = session?.training_model === 'split_ojt' && !isInitialOnlyCampaign(session.campaña);
+        const trackedDays = requiresOjt && session.ojt_module_id
           ? Array.from({ length: 10 }, (_, index) => index + 1)
           : getTrainingDays(session);
         const days = trackedDays.map(d => {
           const rec = recordsByDay?.get(d);
           return rec ? rec.estado_asistencia : 'Pendiente';
         });
-        const finishedOjt = session?.training_model === 'split_ojt' && session.ojt_module_id &&
+        const finishedOjt = requiresOjt && session.ojt_module_id &&
           isPresentAttendance(recordsByDay?.get(10)?.estado_asistencia);
 
         let computedStatus: Participant['estado_final'] = 'Pendiente de gestión';
@@ -323,7 +327,7 @@ export default function App() {
           computedStatus = 'Completó capacitación';
         } else if (days.some(isDropoutAttendanceStatus)) {
           computedStatus = 'Desistió';
-        } else if ((session?.training_model === 'split_ojt' ? p.resultado_formacion_ojt : p.resultado_formacion) === 'No apto') {
+        } else if ((requiresOjt ? p.resultado_formacion_ojt : p.resultado_formacion) === 'No apto') {
           computedStatus = 'Completó capacitación';
         } else if (days.every(isPendingAttendance)) {
           computedStatus = 'Pendiente de gestión';
@@ -335,7 +339,7 @@ export default function App() {
             computedStatus = 'No asistió';
           } else if (hasEverAttended && days.some(isAbsenceAttendance)) {
             computedStatus = 'En riesgo';
-          } else if (finishedOjt || (session?.training_model !== 'split_ojt' && days.every(isPresentAttendance))) {
+          } else if (finishedOjt || (!requiresOjt && days.every(isPresentAttendance))) {
             computedStatus = 'Pendiente de alta';
           } else if (hasEverAttended) {
             computedStatus = 'En formación';
@@ -709,7 +713,7 @@ export default function App() {
       reclutador_nombre: rUser ? rUser.nombre : 'Sin reclutador',
       training_days: 5,
       training_model: 'split_ojt',
-      fecha_fin: getBusinessDayDate(newSess.fecha_inicio, 5),
+      fecha_fin: getBusinessDayDate(newSess.fecha_inicio, getScheduledTrainingDays(newSess.campaña)),
       fecha_creacion: new Date().toISOString()
     };
 
@@ -810,6 +814,36 @@ export default function App() {
     setResponses(data.responses);
     return data;
   }, []);
+
+  const trainingSnapshotRef = useRef({ participants, attendance, sessions, ojtModules, confirmations });
+  trainingSnapshotRef.current = { participants, attendance, sessions, ojtModules, confirmations };
+  const participantSavePending = useRef(false);
+  useEffect(() => {
+    if (!activeUser || !platformLoaded || urlView === 'survey' || !['capacitaciones', 'asistencia', 'encuestas'].includes(currentView)) return;
+    let cancelled = false;
+    let pending = false;
+    const refresh = async () => {
+      if (pending || participantSavePending.current || hasPendingOperationWrites() || document.visibilityState !== 'visible') return;
+      pending = true;
+      const before = trainingSnapshotRef.current;
+      try {
+        const data = await getTrainingProgress();
+        const after = trainingSnapshotRef.current;
+        if (cancelled || participantSavePending.current || hasPendingOperationWrites() || Object.keys(before).some((key) => before[key] !== after[key])) return;
+        setParticipants(data.participants);
+        setAttendance(data.attendance);
+        setSessions(data.sessions);
+        setOjtModules(data.ojt_modules);
+        setConfirmations(data.confirmations);
+      } catch (error) {
+        if (!cancelled) console.error('Error syncing training progress:', error);
+      } finally { pending = false; }
+    };
+    const interval = window.setInterval(() => void refresh(), 5_000);
+    document.addEventListener('visibilitychange', refresh);
+    void refresh();
+    return () => { cancelled = true; window.clearInterval(interval); document.removeEventListener('visibilitychange', refresh); };
+  }, [activeUser, platformLoaded, currentView, urlView]);
 
   useEffect(() => {
     if (!activeUser || !platformLoaded || urlView === 'survey' ||
@@ -1476,9 +1510,9 @@ export default function App() {
       motivo_no_apt_ojt: canEditOutcome && attendancePhase === 'ojt' ? (outcome === 'No apto' ? reason : '') : part.motivo_no_apt_ojt,
       evaluacion_nota: canEditScore && evaluationRequested ? evaluationScore ?? null : part.evaluacion_nota,
       observacion_evaluacion: canEditScore && evaluationRequested ? evaluationObservation : part.observacion_evaluacion,
-      estado_final: canEditOutcome && (sess.training_model !== 'split_ojt' || attendancePhase === 'ojt')
+      estado_final: canEditOutcome && (sess.training_model !== 'split_ojt' || isInitialOnlyCampaign(sess.campaña) || attendancePhase === 'ojt')
         ? (outcome === 'Apto'
-          ? (sess.training_model !== 'split_ojt' || attendance.some((record) => record.participant_id === pId && record.dia === 10 && isPresentAttendance(record.estado_asistencia))
+          ? (sess.training_model !== 'split_ojt' || isInitialOnlyCampaign(sess.campaña) || attendance.some((record) => record.participant_id === pId && record.dia === 10 && isPresentAttendance(record.estado_asistencia))
             ? 'Pendiente de alta' : 'En formación')
           : (outcome === 'No apto' ? 'Completó capacitación' : part.estado_final))
         : part.estado_final,
@@ -1521,18 +1555,22 @@ export default function App() {
     };
     const session = sessions.find((item) => item.id === mergedParticipant.training_session_id);
 
-    setParticipants((current) =>
-      current.map((participant) =>
-        participant.id === mergedParticipant.id ? { ...participant, ...mergedParticipant } : participant,
-      ),
-    );
-
+    participantSavePending.current = true;
     try {
       await persistParticipant(mergedParticipant);
+      setParticipants((current) =>
+        current.map((participant) => participant.id === mergedParticipant.id ? { ...participant, ...mergedParticipant } : participant));
+      if (previous?.dni !== mergedParticipant.dni) {
+        setResponses((current) => current.map((response) => response.participant_id === mergedParticipant.id
+          ? { ...response, dni: mergedParticipant.dni } : response));
+        void refreshSurveyProgress().catch((error) => console.error('Error syncing corrected document:', error));
+      }
     } catch (error) {
       console.error('Error persisting participant details:', error);
       alert(error instanceof Error ? error.message : 'No se pudo guardar los datos del postulante.');
       throw error;
+    } finally {
+      participantSavePending.current = false;
     }
 
     addAuditLog(
@@ -2615,6 +2653,7 @@ export default function App() {
                 <AttendanceControl
                   session={activeSession}
                   phase={attendancePhase}
+                  ojtClosed={isOperationalOjtClosed(activeSession, ojtModules.find((module) => module.id === activeSession.ojt_module_id)?.estado)}
                   participants={participants}
                   attendance={attendance}
                   confirmations={confirmations}

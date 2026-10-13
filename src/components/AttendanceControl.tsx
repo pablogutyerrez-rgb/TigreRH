@@ -35,7 +35,9 @@ import {
 } from 'lucide-react';
 import { TrainingSession, Participant, AttendanceRecord, AttendanceStatus, User as AppUser, AttendanceReopenRequest, OperationConfirmation } from '../types';
 import { permissions } from '../utils/permissions';
-import { getSessionDayDate, getTrainingDays, getTrainingDaysCount } from '../utils/trainingDays';
+import { getBusinessDayDate, getTrainingDaysCount } from '../utils/trainingDays';
+import { hasCampaignOjt } from '../../backend/src/services/trainingSchedule';
+import { isAttendanceWindowOpen } from '../utils/time';
 import { getSessionTrainerNames, isSessionInitialTrainer, isSessionOjtTrainer } from '../utils/trainingAssignments';
 import { getParticipantCvUrlRemote, uploadParticipantCvRemote } from '../services/operationService';
 import * as XLSX from 'xlsx';
@@ -43,6 +45,7 @@ import * as XLSX from 'xlsx';
 interface AttendanceControlProps {
   session: TrainingSession;
   phase?: 'initial' | 'ojt';
+  ojtClosed?: boolean;
   participants: Participant[];
   attendance: AttendanceRecord[];
   confirmations: OperationConfirmation[];
@@ -85,6 +88,7 @@ const MOTIVOS_DESERCION = [
   'Problemas de salud',
   'No cumple perfil',
   'Desistimiento voluntario',
+  'Herramientas',
   'Otro motivo'
 ];
 
@@ -123,6 +127,7 @@ const ATTENDANCE_OPTIONS: Array<{ value: AttendanceStatus; label: string }> = [
 export default function AttendanceControl({
   session,
   phase = 'initial',
+  ojtClosed = false,
   participants,
   attendance,
   confirmations,
@@ -138,8 +143,11 @@ export default function AttendanceControl({
   onGoBack,
   onAttemptLockedEdit
 }: AttendanceControlProps) {
-  const trainingDays = useMemo(() => phase === 'ojt'
-    ? [6, 7, 8, 9, 10] : getTrainingDays(session), [session.training_days, phase]);
+  const hasOjt = hasCampaignOjt(session.campaña);
+  const showEvaluation = phase === 'initial' || !hasOjt;
+  const showOutcome = phase === 'ojt' || !hasOjt;
+  const trainingDays = useMemo(() => phase === 'ojt' && hasOjt
+    ? [6, 7, 8, 9, 10] : [1, 2, 3, 4, 5], [hasOjt, phase]);
   const trainingDaysCount = useMemo(() => trainingDays[trainingDays.length - 1], [trainingDays]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDay, setSelectedDay] = useState<number>(phase === 'ojt' ? 6 : 1);
@@ -213,6 +221,7 @@ export default function AttendanceControl({
   const [isUploadingCv, setIsUploadingCv] = useState(false);
   const [selectedCvFile, setSelectedCvFile] = useState<File | null>(null);
   const [participantDraft, setParticipantDraft] = useState({
+    dni: '',
     nombres: '',
     apellidos: '',
     celular: '',
@@ -263,6 +272,7 @@ export default function AttendanceControl({
   };
 
   const canEditOutcome = (part: Participant) => {
+    if (phase === 'ojt' && ojtClosed && !isAdmin) return false;
     const rowAttendance = trainingDays.map(day => attendanceMap[`${part.id}_${day}`]);
     const hasDropout = part.estado_final === 'Desistió' || rowAttendance.some(a => isDropoutStatus(a?.estado_asistencia));
     const hasAnyPresent = rowAttendance.some(a => isPresentStatus(a?.estado_asistencia));
@@ -313,6 +323,7 @@ export default function AttendanceControl({
     setSelectedCvFile(null);
     setEditingParticipant(part);
     setParticipantDraft({
+      dni: String(part.dni || ''),
       nombres: part.nombres || '',
       apellidos: part.apellidos || '',
       celular: part.celular || '',
@@ -328,9 +339,21 @@ export default function AttendanceControl({
     if (!editingParticipant || !onUpdateParticipantDetails) return;
     if (isUploadingCv) return;
     const currentParticipant = participants.find((item) => item.id === editingParticipant.id) || editingParticipant;
+    const dni = participantDraft.dni.trim();
+    if (canEditDocument && dni !== String(currentParticipant.dni)) {
+      if (!/^\d{8,15}$/.test(dni)) {
+        alert('Ingresa un DNI o CE valido de 8 a 15 digitos.');
+        return;
+      }
+      if (participants.some((item) => item.id !== currentParticipant.id && item.training_session_id === currentParticipant.training_session_id &&
+        String(item.dni).trim().replace(/^0+(?=\d)/, '') === dni.replace(/^0+(?=\d)/, ''))) {
+        alert('El documento ya esta registrado en esta capacitacion.');
+        return;
+      }
+    }
     const nextParticipant: Participant = {
       ...currentParticipant,
-      ...editingParticipant,
+      dni: canEditDocument ? dni : currentParticipant.dni,
       nombres: participantDraft.nombres.trim(),
       apellidos: participantDraft.apellidos.trim(),
       celular: participantDraft.celular.trim(),
@@ -360,6 +383,8 @@ export default function AttendanceControl({
   };
 
   const canUploadCv = CV_ALLOWED_UPLOAD_ROLES.includes(currentUser.rol);
+  const canEditDocument = ['Administrador', 'Reclutador', 'Coordinador'].includes(currentUser.rol) &&
+    !currentUser.module_view_only?.includes('formacion:asistencia');
   const hasViewableCv = (part: Participant) => Boolean(
     part.cv_file_path ||
     (currentUser.rol === 'Formador' && (
@@ -571,11 +596,11 @@ export default function AttendanceControl({
   }, [filteredParts, attendanceMap, selectedDay]);
 
   const attendanceWindowLabel = useMemo(() => {
-    if (currentUser.rol === 'Formador') return '09:00 a 09:30';
+    if (currentUser.rol === 'Formador' || (currentUser.rol === 'Analista' && (isInitialTrainer || isOjtTrainer))) return '08:00 a 19:00';
     const [hour, minute] = (session.hora_capacitacion || '09:00').split(':').map(Number);
     const end = hour * 60 + minute + 30;
     return `${session.hora_capacitacion || '09:00'} a ${String(Math.floor(end / 60) % 24).padStart(2, '0')}:${String(end % 60).padStart(2, '0')}`;
-  }, [currentUser.rol, session.hora_capacitacion]);
+  }, [currentUser.rol, session.hora_capacitacion, isInitialTrainer, isOjtTrainer]);
 
   // Check if modification is locked based on Role, Simulated Time and Reopens
   const isTimeLocked = useMemo(() => {
@@ -589,19 +614,13 @@ export default function AttendanceControl({
 
     // Rule: Administrador -> Access permitted always
     if (currentUser.rol === 'Administrador') return false;
+    if (phase === 'ojt' && ojtClosed) return true;
 
     // Rule: Formador -> Checks hours and reopens
     if (currentUser.rol === 'Formador' || (currentUser.rol === 'Analista' && (isInitialTrainer || isOjtTrainer))) {
       const hour = simulatedTime.hour;
       const min = simulatedTime.minute;
       const totalMinutes = hour * 60 + min;
-
-      const startMinutes = 9 * 60;
-      const endMinutes = 9 * 60 + 30;
-
-      const isWithinNormalWindow = totalMinutes >= startMinutes && totalMinutes <= endMinutes;
-
-      if (isWithinNormalWindow) return false;
 
       // Check for approved reopen
       const hasApprovedReopen = reopens.some(r =>
@@ -611,11 +630,11 @@ export default function AttendanceControl({
         (!r.habilitado_hasta || new Date(r.habilitado_hasta).getTime() >= Date.now())
       );
 
-      return !hasApprovedReopen;
+      return !isAttendanceWindowOpen(currentUser.rol, hasApprovedReopen, totalMinutes);
     }
 
     return true;
-  }, [currentUser, simulatedTime, reopens, session.id, selectedDay, isAdmin, isInitialTrainer, isOjtTrainer]);
+  }, [currentUser, simulatedTime, reopens, session.id, selectedDay, isAdmin, isInitialTrainer, isOjtTrainer, phase, ojtClosed]);
 
   const readEvidenceFile = (
     file: File | undefined,
@@ -710,7 +729,7 @@ export default function AttendanceControl({
   // Date generator based on Session Start Date
   const getDayDate = (day: number) => {
     try {
-      return getSessionDayDate(session, day);
+      return attendance.find((record) => record.training_session_id === session.id && record.dia === day)?.fecha || getBusinessDayDate(session.fecha_inicio, day);
     } catch {
       return session.fecha_inicio;
     }
@@ -1315,10 +1334,10 @@ export default function AttendanceControl({
                       Día {dayNum}
                     </th>
                   ))}
-                  {(session.training_model !== 'split_ojt' || phase === 'initial') && <th className="p-4 text-center">Evaluación</th>}
-                  <th className="p-4 text-center">Resultado formación</th>
+                  {showEvaluation && <th className="p-4 text-center">Evaluación</th>}
+                  {showOutcome && <th className="p-4 text-center">Resultado formación</th>}
                   {session.training_model === 'split_ojt' && phase === 'ojt' && <th className="p-4 text-center">Ventas</th>}
-                  {(session.training_model !== 'split_ojt' || phase === 'ojt') && <th className="p-4">Estado Final</th>}
+                  <th className="p-4">Estado Final</th>
                   <th className="p-4">Deserción / Obs</th>
                 </tr>
               </thead>
@@ -1492,7 +1511,7 @@ export default function AttendanceControl({
                       })}
 
                       {/* Evaluation score cell */}
-                      {(session.training_model !== 'split_ojt' || phase === 'initial') && <td className="p-2 text-center bg-slate-50/60 min-w-[190px]">
+                      {showEvaluation && <td className="p-2 text-center bg-slate-50/60 min-w-[190px]">
                         {(() => {
                           const editable = canEditEvaluation(part);
                           const currentScore = part.evaluacion_nota ?? '';
@@ -1534,10 +1553,32 @@ export default function AttendanceControl({
                             </div>
                           );
                         })()}
+                        {!showOutcome && <div className="flex flex-col items-center gap-1">
+                          {canEditOutcome(part) ? <select
+                            value={part.resultado_formacion || 'Marcar'}
+                            onChange={(event) => handleOutcomeSelect(part, event.target.value as 'Marcar' | 'Apto' | 'No apto')}
+                            className={`text-[11px] font-bold rounded-lg p-1.5 border outline-hidden cursor-pointer ${
+                              part.resultado_formacion === 'Apto' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
+                              part.resultado_formacion === 'No apto' ? 'bg-rose-50 border-rose-200 text-rose-700' :
+                              'bg-white border-slate-200 text-slate-500'
+                            }`}>
+                            <option value="Marcar">Marcar</option><option value="Apto">Apto</option><option value="No apto">No apto</option>
+                          </select> : <span className={`inline-flex items-center justify-center font-bold px-2 py-0.5 rounded-full text-[10px] ${
+                            part.resultado_formacion === 'Apto' ? 'bg-emerald-100 text-emerald-800' :
+                            part.resultado_formacion === 'No apto' ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-600'
+                          }`}>{part.resultado_formacion || 'Marcar'}</span>}
+                          <span className="text-[9px] text-slate-400 max-w-[120px] truncate block italic" title={part.comentario_aptitud || part.motivo_no_apt}>
+                            {part.resultado_formacion === 'Apto' ? part.comentario_aptitud : part.motivo_no_apt}
+                          </span>
+                          {session.training_model !== 'split_ojt' && canEditOutcome(part) && part.resultado_formacion !== 'Apto' &&
+                            <button onClick={() => handleEarlyAlta(part)} className="mt-1 inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[9px] font-black uppercase text-emerald-700 hover:bg-emerald-100 cursor-pointer">
+                              <ShieldCheck className="w-3 h-3" />Alta anticipada
+                            </button>}
+                        </div>}
                       </td>}
 
                       {/* Resultado formación cell */}
-                      <td className="p-2 text-center bg-indigo-50/5">
+                      {showOutcome && <td className="p-2 text-center bg-indigo-50/5">
                         {(() => {
                           const canMarkOutcome = canEditOutcome(part);
 
@@ -1609,7 +1650,7 @@ export default function AttendanceControl({
                             );
                           }
                         })()}
-                      </td>
+                      </td>}
 
                       {session.training_model === 'split_ojt' && phase === 'ojt' && (
                         <td className="p-2 text-center">
@@ -1626,7 +1667,7 @@ export default function AttendanceControl({
                       )}
 
                       {/* Final status display */}
-                      {(session.training_model !== 'split_ojt' || phase === 'ojt') && <td className="p-4">
+                      <td className="p-4">
                         <span className={`px-2 py-1 rounded-full font-bold text-[10px] ${
                           computedStatus === 'Alta confirmada' ? 'bg-emerald-100 text-emerald-800' :
                           computedStatus === 'En formación' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
@@ -1637,7 +1678,7 @@ export default function AttendanceControl({
                         }`}>
                           {computedStatus}
                         </span>
-                      </td>}
+                      </td>
 
                       {/* Observation/Deserción Reason info */}
                       <td className="p-4 max-w-[150px] truncate">
@@ -1733,6 +1774,12 @@ export default function AttendanceControl({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              {canEditDocument && <label className="space-y-1">
+                <span className="block font-bold text-slate-600">DNI / CE</span>
+                <input value={participantDraft.dni} inputMode="numeric" maxLength={15}
+                  onChange={(event) => setParticipantDraft((current) => ({ ...current, dni: event.target.value }))}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 outline-hidden focus:ring-1 focus:ring-indigo-500 text-slate-800" />
+              </label>}
               {[
                 ['nombres', 'Nombres'],
                 ['apellidos', 'Apellidos'],

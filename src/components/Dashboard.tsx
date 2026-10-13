@@ -2,6 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
+import { isToolsDropout } from '../../backend/src/services/attendancePolicy';
 
 import { calculatePhaseMetrics } from '../../backend/src/services/trainingPhaseMetrics';
 import React, { useState, useMemo } from 'react';
@@ -76,6 +77,7 @@ const EXCLUDENT_DESERTION_REASONS = new Set([
   'desistimiento voluntario',
 ]);
 const isExcludentDesertion = (record: AttendanceRecord) =>
+  isToolsDropout(record) ||
   normalizeAttendanceStatus(record.estado_asistencia) === 'desistio' &&
   EXCLUDENT_DESERTION_REASONS.has(normalizeAttendanceStatus(record.motivo_desercion));
 const sessionStartDate = (session: Pick<TrainingSession, 'fecha_inicio'>) => String(session.fecha_inicio || '');

@@ -30,6 +30,7 @@ import {
 import { TrainingSession, OjtModule, Participant, User as AppUser, AttendanceStatus, AttendanceRecord, TrainingSurvey, SurveyResponse, OperationConfirmation } from '../types';
 import { buildTrainingWorkbook } from '../utils/trainingExport';
 import { permissions } from '../utils/permissions';
+import { getScheduledTrainingDays, hasCampaignOjt, isBusinessDate, isInitialAttendanceComplete } from '../../backend/src/services/trainingSchedule';
 import { findParticipantSurveyResponse } from '../utils/surveyCompletion';
 import { getBusinessDayDate, getTrainingDays, getTrainingDaysCount } from '../utils/trainingDays';
 import { BPO_CAMPAIGNS, getCampaignPrefix, normalizeCampaignName } from '../constants/campaigns';
@@ -40,6 +41,7 @@ import {
   getSessionTrainerNames,
   isSessionAssignedTrainer,
   isSessionInitialTrainer,
+  canViewOperationalOjt,
 } from '../utils/trainingAssignments';
 
 interface CapacitacionesProps {
@@ -235,8 +237,8 @@ export default function Capacitaciones({
   const [observaciones, setObservaciones] = useState('');
 
   React.useEffect(() => {
-    setFechaFin(getBusinessDayDate(fechaInicio, 5));
-  }, [fechaInicio]);
+    setFechaFin(getBusinessDayDate(fechaInicio, getScheduledTrainingDays(campaña)));
+  }, [fechaInicio, campaña]);
 
   // Editing Training states
   const [editingSession, setEditingSession] = useState<TrainingSession | null>(null);
@@ -643,6 +645,7 @@ export default function Capacitaciones({
 
   const handleEditCampaignChange = (nextCampaign: string) => {
     setEditCampaña(nextCampaign);
+    if (editingSession?.training_model === 'split_ojt') setEditFechaFin(getBusinessDayDate(editFechaInicio, getScheduledTrainingDays(nextCampaign)));
     if (editingSession && currentUser.rol === 'Administrador') {
       setEditManualGenerationCode(buildTrainingCode(nextCampaign, editFechaInicio, editingSession.id));
     }
@@ -650,7 +653,7 @@ export default function Capacitaciones({
 
   const handleEditStartDateChange = (nextStartDate: string) => {
     setEditFechaInicio(nextStartDate);
-    if (editingSession?.training_model === 'split_ojt') setEditFechaFin(getBusinessDayDate(nextStartDate, 5));
+    if (editingSession?.training_model === 'split_ojt') setEditFechaFin(getBusinessDayDate(nextStartDate, getScheduledTrainingDays(editCampaña)));
     if (editingSession && currentUser.rol === 'Administrador') {
       setEditManualGenerationCode(buildTrainingCode(editCampaña, nextStartDate, editingSession.id));
     }
@@ -658,6 +661,10 @@ export default function Capacitaciones({
 
   const handleSaveEdit = () => {
     if (!editingSession) return;
+    if (!isBusinessDate(editFechaInicio) || !isBusinessDate(editFechaFin) || editFechaFin < editFechaInicio) {
+      alert('Selecciona fechas de lunes a viernes y un fin igual o posterior al inicio.');
+      return;
+    }
     const initialTrainers = trainers.filter((trainer) => editFormadorInicialIds.includes(trainer.id));
     const ojtTrainers = trainers.filter((trainer) => editFormadorOjtIds.includes(trainer.id));
     const selectedTrainers = trainers.filter((trainer) =>
@@ -999,7 +1006,7 @@ export default function Capacitaciones({
         
         if (ymd && !isNaN(Date.parse(ymd))) {
           setFechaInicio(ymd);
-          setFechaFin(getBusinessDayDate(ymd, 5));
+          setFechaFin(getBusinessDayDate(ymd, getScheduledTrainingDays(campaña)));
         }
       }
     }
@@ -1396,15 +1403,16 @@ export default function Capacitaciones({
 
       // If user is a Formador, they can only see their own assigned sessions (this is double guarded here)
       const matchesRoleAccess =
-        currentUser.rol !== 'Formador' || isSessionAssignedTrainer(s, currentUser.id);
+        currentUser.rol !== 'Formador' || (isSessionAssignedTrainer(s, currentUser.id) &&
+          (isSessionInitialTrainer(s, currentUser.id) || canViewOperationalOjt(s, currentUser, ojtModules.find((module) => module.id === s.ojt_module_id)?.estado)));
 
       return matchesSearch && matchesCampaña && matchesEstado && matchesFecha && matchesFormador && matchesMes && matchesGeneracion && matchesRoleAccess;
     });
-  }, [sessions, searchTerm, filterCampañas, filterEstados, filterDesde, filterHasta, filterFormadores, filterMes, filterGeneraciones, currentUser]);
+  }, [sessions, searchTerm, filterCampañas, filterEstados, filterDesde, filterHasta, filterFormadores, filterMes, filterGeneraciones, currentUser, ojtModules]);
 
   const matchesOjtSession = (module: OjtModule, id: string) => sessions.some((session) =>
       session.id === id &&
-      (currentUser.rol !== 'Formador' || isSessionAssignedTrainer(session, currentUser.id)) &&
+      canViewOperationalOjt(session, currentUser, module.estado) &&
       (filterCampañas.length === 0 || filterCampañas.includes(session.campaña)) &&
       (filterFormadores.length === 0 || getSessionTrainerIds(session).some((trainerId) => filterFormadores.includes(trainerId))) &&
       (filterMes.length === 0 || filterMes.includes(String(module.fecha_inicio || '').slice(5, 7))) &&
@@ -1521,10 +1529,14 @@ export default function Capacitaciones({
               {visibleOjtModules.map((module) => (
                 <div key={module.id} className="glass-card rounded-2xl p-5 space-y-2 text-xs text-slate-600">
                   <h3 className="text-base font-bold text-slate-800">{module.nombre}</h3>
-                  <p>{module.generation_codes.join(', ')}</p>
+                  <p>{currentUser.rol === 'Formador'
+                    ? module.generation_ids.filter((id) => matchesOjtSession(module, id)).map((id) => getTrainingIdentifier(sessions.find((session) => session.id === id)!)).join(', ')
+                    : module.generation_codes.join(', ')}</p>
                   <p>Periodo: {module.fecha_inicio} al {module.fecha_fin}</p>
                   <p>Hora: {module.hora_capacitacion} · Formador OJT: {module.formador_ojt_nombres.join(', ')}</p>
-                  <p>Participantes: {module.participant_ids.length} · {module.turno} · {module.modalidad}</p>
+                  <p>Participantes: {currentUser.rol === 'Formador'
+                    ? participants.filter((participant) => module.participant_ids.includes(participant.id) && matchesOjtSession(module, participant.training_session_id)).length
+                    : module.participant_ids.length} · {module.turno} · {module.modalidad}</p>
                   {module.generation_ids.filter((id) => matchesOjtSession(module, id)).map((id) => (
                     <button key={id} type="button" onClick={() => onViewAttendance(id, 'ojt')} className="block text-indigo-700 font-semibold hover:underline">
                       Ver asistencia OJT: {sessions.find((session) => session.id === id)?.generation_code || id}
@@ -1661,12 +1673,10 @@ export default function Capacitaciones({
                     <div className="bg-slate-50/50 p-4 rounded-b-2xl border-t border-slate-50 flex justify-between items-center gap-2">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {onAssignOjt && !session.ojt_module_id &&
-                          ['Entel Empresas RUC 10', 'Entel Empresas RUC 20', 'GPON', 'Culqi', 'Equifax', 'Fija', 'Tigre Academy'].includes(session.campaña) &&
+                          hasCampaignOjt(session.campaña) &&
                           (currentUser.rol === 'Administrador' || (['Formador', 'Analista'].includes(currentUser.rol) && isSessionInitialTrainer(session, currentUser.id))) &&
                           !currentUser.module_view_only?.includes('formacion:capacitaciones') &&
-                          participants.filter((part) => part.training_session_id === session.id).length > 0 &&
-                          participants.filter((part) => part.training_session_id === session.id).every((part) =>
-                            attendance.some((record) => record.participant_id === part.id && record.dia === 5 && !['Seleccionar', 'Pendiente', ''].includes(record.estado_asistencia))) && (
+                          isInitialAttendanceComplete(session.id, participants.filter((part) => part.training_session_id === session.id), attendance) && (
                           <button type="button" disabled={assigningOjtId === session.id} onClick={async () => {
                             setAssigningOjtId(session.id);
                             try { await onAssignOjt(session.id); }
@@ -2422,7 +2432,7 @@ export default function Capacitaciones({
                     type="date"
                     value={editFechaFin}
                     onChange={(e) => setEditFechaFin(e.target.value)}
-                    max={editingSession?.training_model === 'split_ojt' ? getBusinessDayDate(editFechaInicio, 5) : undefined}
+                    min={editFechaInicio}
                     className="w-full text-sm bg-slate-50 text-slate-700 rounded-xl border border-slate-200 p-2.5 focus:ring-2 focus:ring-indigo-500 outline-hidden"
                   />
                 </div>

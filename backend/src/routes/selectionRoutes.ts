@@ -1,4 +1,5 @@
 import { Router, type Response } from 'express';
+import { getScheduledTrainingDays } from '../services/trainingSchedule.js';
 import { z } from 'zod';
 import { dataDb as adminDb } from '../hybridDb.js';
 import {
@@ -837,7 +838,7 @@ router.post(
       return;
     }
     let businessDays = 1;
-    while (businessDays < 5) {
+    while (businessDays < getScheduledTrainingDays(requisition.cuenta)) {
       startDate.setDate(startDate.getDate() + 1);
       if (![0, 6].includes(startDate.getDay())) businessDays += 1;
     }

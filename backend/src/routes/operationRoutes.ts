@@ -3,6 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { adminStorage } from '../firebaseAdmin.js';
 import { dataDb as adminDb, DELETE_FIELD } from '../hybridDb.js';
+import { updateParticipantDocument } from '../services/participantDocumentService.js';
+import { isInitialOnlyCampaign } from '../services/trainingSchedule.js';
+import { isAttendanceMinutesOpen, peruAttendanceMinutes, isOperationalOjtClosed } from '../services/attendancePolicy.js';
 import {
   deleteCvFromGoogleDrive,
   downloadCvFromGoogleDrive,
@@ -87,7 +90,8 @@ const getStorageBucketCandidates = (preferredBucket?: string) => {
 
 const isAssignedTrainer = (data: Record<string, unknown> | undefined, userId: string) =>
   data?.formador_id === userId ||
-  (Array.isArray(data?.formador_ids) && data.formador_ids.includes(userId));
+  [data?.formador_ids, data?.formador_capacitacion_inicial_ids, data?.formador_ojt_ids]
+    .some((ids) => Array.isArray(ids) && ids.includes(userId));
 
 const hasSplitTrainerAssignment = (data: Record<string, unknown> | undefined) =>
   Array.isArray(data?.formador_capacitacion_inicial_ids) || Array.isArray(data?.formador_ojt_ids);
@@ -135,6 +139,38 @@ const canAccessParticipant = async (req: AuthenticatedRequest, participantId: st
   return { participantDoc, participant, sessionId };
 };
 
+const attendanceWriteError = async (req: AuthenticatedRequest, sessionId: string, session: Record<string, unknown>, records: Record<string, unknown>[]) => {
+  if (req.user!.rol === 'Administrador') return null;
+  if (records.some((record) => Number(record.dia) >= 6)) {
+    const module = session.ojt_module_id ? await adminDb.collection('ojt_modules').doc(String(session.ojt_module_id)).get() : null;
+    if (isOperationalOjtClosed(session, module?.data()?.estado)) return 'Esta capacitacion OJT esta cerrada.';
+  }
+  if (isAttendanceMinutesOpen(peruAttendanceMinutes())) return null;
+  const reopens = await adminDb.collection('reopens').where('training_session_id', '==', sessionId).get();
+  const now = Date.now();
+  const approvedDays = new Set(reopens.docs.filter((doc) => {
+    const data = doc.data();
+    return data.estado === 'aprobada' &&
+      (!data.habilitado_hasta || new Date(String(data.habilitado_hasta)).getTime() >= now);
+  }).map((doc) => Number(doc.data().dia_capacitacion)));
+  if (records.every((record) => approvedDays.has(Number(record.dia)))) return null;
+  const previous = (await adminDb.collection('attendance').where('training_session_id', '==', sessionId).get()).docs.map((doc) => doc.data());
+  // Preserve the existing propagation of a reopened dropout, only within its assigned phase.
+  const allowed = records.every((record) => approvedDays.has(Number(record.dia)) ||
+    (isDropoutAttendance(record.estado_asistencia) && [...records, ...previous].some((base) =>
+      approvedDays.has(Number(base.dia)) && Number(base.dia) < Number(record.dia) &&
+      (Number(base.dia) <= 5) === (Number(record.dia) <= 5) &&
+      ['participant_id', 'estado_asistencia', 'motivo_desercion', 'observacion'].every((field) => base[field] === record[field]))) ||
+    (record.estado_asistencia === 'Seleccionar' &&
+      previous.some((old) => old.participant_id === record.participant_id && Number(old.dia) === Number(record.dia) && isDropoutAttendance(old.estado_asistencia)) &&
+      records.some((base) => approvedDays.has(Number(base.dia)) && base.participant_id === record.participant_id &&
+        Number(base.dia) < Number(record.dia) && (Number(base.dia) <= 5) === (Number(record.dia) <= 5) &&
+        !isDropoutAttendance(base.estado_asistencia) && previous.some((old) =>
+          old.participant_id === base.participant_id && Number(old.dia) === Number(base.dia) &&
+          (isDropoutAttendance(old.estado_asistencia) || Boolean(old.motivo_desercion))))));
+  return allowed ? null : 'Registro habilitado de 08:00 a 19:00 (Peru). Solicita una reapertura fuera de horario.';
+};
+
 router.put(
   '/attendance/bulk',
   requireAuth,
@@ -170,6 +206,11 @@ router.put(
       }
     }
 
+    for (const [sessionId, session] of sessions) {
+      const error = await attendanceWriteError(req, sessionId, session,
+        parsed.data.records.filter((record) => record.training_session_id === sessionId));
+      if (error) { res.status(403).json({ message: error }); return; }
+    }
     const writer = adminDb.bulkWriter();
     parsed.data.records.forEach((record) => {
       writer.set(adminDb.collection('attendance').doc(String(record.id)), record, { merge: true });
@@ -201,6 +242,8 @@ router.put(
       }
     }
     const attendanceRef = adminDb.collection('attendance').doc(req.params.id);
+    const accessError = await attendanceWriteError(req, parsed.data.training_session_id, session.data(), [parsed.data]);
+    if (accessError) { res.status(403).json({ message: accessError }); return; }
     const previousAttendance = await attendanceRef.get();
     const previousData = previousAttendance.data();
     const isDropoutCorrection =
@@ -311,7 +354,7 @@ router.put(
     }
     if (parsed.data.estado_alta === 'Alta confirmada') {
       const session = await adminDb.collection('sessions').doc(parsed.data.training_session_id).get();
-      if (session.data()?.training_model === 'split_ojt') {
+      if (session.data()?.training_model === 'split_ojt' && !isInitialOnlyCampaign(session.data()?.campaña)) {
         const participant = await adminDb.collection('participants').doc(String(parsed.data.participant_id || '')).get();
         const dayTen = await adminDb.collection('attendance').where('participant_id', '==', parsed.data.participant_id).get();
         if (!session.data()?.ojt_module_id || participant.data()?.training_session_id !== parsed.data.training_session_id ||
@@ -358,6 +401,25 @@ router.put(
     }
     const currentParticipant = await adminDb.collection('participants').doc(req.params.id).get();
     const currentData = currentParticipant.data();
+    if (currentParticipant.exists && parsed.data.dni !== undefined && String(parsed.data.dni).trim() !== String(currentData.dni ?? '').trim()) {
+      if (!['Administrador', 'Reclutador', 'Coordinador'].includes(req.user!.rol) ||
+        req.user!.module_view_only.includes('formacion:asistencia')) {
+        res.status(403).json({ message: 'No tienes permiso para corregir el documento del postulante.' });
+        return;
+      }
+      if (currentData.training_session_id !== parsed.data.training_session_id || !(await ownsSession(req, String(currentData.training_session_id)))) {
+        res.status(403).json({ message: 'No puedes modificar este participante.' });
+        return;
+      }
+      try {
+        const participant = await updateParticipantDocument(req.params.id, parsed.data, req.user!);
+        res.json({ ok: true, participant });
+      } catch (error) {
+        const failure = error as Error & { status?: number };
+        res.status(failure.status || 500).json({ message: failure.status ? failure.message : 'No se pudo guardar el documento del postulante.' });
+      }
+      return;
+    }
     if (req.user!.rol !== 'Administrador' &&
       ((parsed.data.estado_alta === 'Alta confirmada' && currentData?.estado_alta !== 'Alta confirmada') ||
         (parsed.data.estado_final === 'Alta confirmada' && currentData?.estado_final !== 'Alta confirmada') ||
