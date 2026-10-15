@@ -5,6 +5,7 @@ export const TRAINING_EXPORT_HEADERS = [
   'Campaña', 'Código de generación', 'Nombre del postulante',
   'Asistencia D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9', 'D10',
   'Desistió (Sí/No)', 'Motivo de desistimiento/baja', 'Apto/No apto', 'Nota del examen',
+  'Perfil del ejecutivo',
 ];
 const key = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
 
@@ -35,7 +36,7 @@ export const buildTrainingWorkbook = (
     return [session.campaña || '', session.generation_code || session.nombre_generacion || '',
       `${person.nombres || ''} ${person.apellidos || ''}`.trim(), ...states,
       states.some((state) => key(String(state)) === 'desistio') ? 'Sí' : 'No',
-      [...new Set(reasons.length ? reasons : person.motivo_desercion ? [person.motivo_desercion] : [])].join('; '), outcome === 'Marcar' ? '' : outcome || '', person.evaluacion_nota ?? ''];
+      [...new Set(reasons.length ? reasons : person.motivo_desercion ? [person.motivo_desercion] : [])].join('; '), outcome === 'Marcar' ? '' : outcome || '', person.evaluacion_nota ?? '', person.puesto ?? ''];
   }).sort((a, b) => String(a[0]).localeCompare(String(b[0]), 'es') || String(a[1]).localeCompare(String(b[1]), 'es'));
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([TRAINING_EXPORT_HEADERS, ...rows]), 'Postulantes');
