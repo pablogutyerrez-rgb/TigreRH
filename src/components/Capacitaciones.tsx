@@ -1413,6 +1413,7 @@ export default function Capacitaciones({
 
   const matchesOjtSession = (module: OjtModule, id: string) => sessions.some((session) =>
       session.id === id &&
+      hasCampaignOjt(session.campaña) &&
       canViewOperationalOjt(session, currentUser, module.estado) &&
       (filterCampañas.length === 0 || filterCampañas.includes(session.campaña)) &&
       (filterFormadores.length === 0 || getSessionTrainerIds(session).some((trainerId) => filterFormadores.includes(trainerId))) &&
@@ -1426,6 +1427,9 @@ export default function Capacitaciones({
     module.generation_ids.some((id) => matchesOjtSession(module, id)) &&
     (filterEstados.length === 0 || filterEstados.includes(module.estado)),
   );
+
+  const visibleOjtSessionIds = (module: OjtModule) =>
+    module.generation_ids.filter((id) => matchesOjtSession(module, id));
 
   const downloadInformation = () => {
     const showInitial = filterEtapas.length === 0 || filterEtapas.includes('initial');
@@ -1530,15 +1534,11 @@ export default function Capacitaciones({
               {visibleOjtModules.map((module) => (
                 <div key={module.id} className="glass-card rounded-2xl p-5 space-y-2 text-xs text-slate-600">
                   <h3 className="text-base font-bold text-slate-800">{module.nombre}</h3>
-                  <p>{currentUser.rol === 'Formador'
-                    ? module.generation_ids.filter((id) => matchesOjtSession(module, id)).map((id) => getTrainingIdentifier(sessions.find((session) => session.id === id)!)).join(', ')
-                    : module.generation_codes.join(', ')}</p>
+                  <p>{visibleOjtSessionIds(module).map((id) => getTrainingIdentifier(sessions.find((session) => session.id === id)!)).join(', ')}</p>
                   <p>Periodo: {module.fecha_inicio} al {module.fecha_fin}</p>
                   <p>Hora: {module.hora_capacitacion} · Formador OJT: {module.formador_ojt_nombres.join(', ')}</p>
-                  <p>Participantes: {currentUser.rol === 'Formador'
-                    ? participants.filter((participant) => module.participant_ids.includes(participant.id) && matchesOjtSession(module, participant.training_session_id)).length
-                    : module.participant_ids.length} · {module.turno} · {module.modalidad}</p>
-                  {module.generation_ids.filter((id) => matchesOjtSession(module, id)).map((id) => (
+                  <p>Participantes: {participants.filter((participant) => module.participant_ids.includes(participant.id) && visibleOjtSessionIds(module).includes(participant.training_session_id)).length} · {module.turno} · {module.modalidad}</p>
+                  {visibleOjtSessionIds(module).map((id) => (
                     <button key={id} type="button" onClick={() => onViewAttendance(id, 'ojt')} className="block text-indigo-700 font-semibold hover:underline">
                       Ver asistencia OJT: {sessions.find((session) => session.id === id)?.generation_code || id}
                     </button>

@@ -53,6 +53,7 @@ import { permissions } from '../utils/permissions';
 import { filterSurveys } from '../utils/surveyFilters';
 import { findParticipantSurveyResponse, getSurveyParticipants } from '../utils/surveyCompletion';
 import { getSessionTrainerIds, getSessionTrainerNames, isSessionAssignedTrainer } from '../utils/trainingAssignments';
+import { hasCampaignOjt } from '../../backend/src/services/trainingSchedule';
 
 const OPERATIONS_SUPERVISORS: Record<string, string[]> = {
   Culqi: ['Augusto Tello', 'Jerson Atoche', 'Romey Huiman', 'Johnny Weill', 'Christian Delgado', 'Rosel Guevara'],
@@ -177,13 +178,17 @@ export default function Encuestas({
     sessions.find((session) => session.id === survey.training_session_id);
 
   const getSurveyGenerationCode = (survey: TrainingSurvey) => {
-    if (survey.survey_type === 'ojt' && survey.grupo_ojt) return survey.grupo_ojt;
+    if (survey.survey_type === 'ojt') return survey.grupo_ojt || ojtModules.find((module) => module.id === survey.ojt_module_id)?.nombre || survey.codigo_generacion;
     const session = getSurveySession(survey);
     return session?.generation_code || session?.nombre_generacion || survey.codigo_generacion;
   };
 
-  const getSurveyCampaigns = (survey: TrainingSurvey) =>
-    survey.survey_type === 'ojt' && survey.grupo_campañas?.length ? survey.grupo_campañas : [getSurveySession(survey)?.campaña || survey.campaña].filter(Boolean);
+  const getSurveyCampaigns = (survey: TrainingSurvey) => {
+    if (survey.survey_type !== 'ojt') return [getSurveySession(survey)?.campaña || survey.campaña].filter(Boolean);
+    const module = ojtModules.find((item) => item.id === survey.ojt_module_id);
+    const campaigns = sessions.filter((session) => module?.generation_ids.includes(session.id) && hasCampaignOjt(session.campaña)).map((session) => session.campaña);
+    return Array.from(new Set(campaigns.length ? campaigns : (survey.grupo_campañas || []).filter(hasCampaignOjt)));
+  };
 
   const getSurveyCampaignLabel = (survey: TrainingSurvey) => getSurveyCampaigns(survey).join(', ');
 
@@ -270,7 +275,7 @@ export default function Encuestas({
   // Only active surveys (excluding deleted ones)
   const visibleSurveys = useMemo(() => {
     const visibleOjtModuleIds = new Set(ojtModules.filter((module) =>
-      module.generation_ids.some((sessionId) => visibleSessionIds.includes(sessionId)),
+      module.generation_ids.some((sessionId) => visibleSessionIds.includes(sessionId) && hasCampaignOjt(sessions.find((session) => session.id === sessionId)?.campaña)),
     ).map((module) => module.id));
     return surveys.filter(s => s.estado !== 'Eliminada' && (
       isAdmin || isAnalyst || isStaff || isRecruiter ||
@@ -655,7 +660,7 @@ export default function Encuestas({
     if (createSurveyType === 'operaciones' && (!operationsCampaign || operationsSupervisors.length === 0)) return;
 
     const sourceSession = selectedSessionObj || (selectedOjtModule ? sessions.find((session) => selectedOjtModule.generation_ids.includes(session.id)) : undefined);
-    const ojtSessions = selectedOjtModule ? sessions.filter((session) => selectedOjtModule.generation_ids.includes(session.id)) : [];
+    const ojtSessions = selectedOjtModule ? sessions.filter((session) => selectedOjtModule.generation_ids.includes(session.id) && hasCampaignOjt(session.campaña)) : [];
     const genCode = createSurveyType === 'operaciones'
       ? `${operationsCampaign}${operationsSubcampaign ? `-${operationsSubcampaign}` : ''}`
       : createSurveyType === 'ojt' ? selectedOjtModule!.nombre : selectedSessionObj!.generation_code || selectedSessionObj!.nombre_generacion;
