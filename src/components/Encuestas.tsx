@@ -969,9 +969,9 @@ export default function Encuestas({
 
       <div className="border-b border-slate-200 flex flex-wrap gap-2">
         {([
-          ['inicial', 'Capacitación Inicial', ClipboardCheck],
+          ['inicial', 'Acompañamiento Inicial', ClipboardCheck],
           ['ojt', 'Acompañamiento OJT', UserCheck],
-          ['operaciones', 'Experiencia en Operaciones', Building2],
+          ['operaciones', 'Acompañamiento OPE', Building2],
         ] as const).map(([section, label, Icon]) => (
           <button key={section} onClick={() => { setSurveySection(section); setFilterCampaign(''); setFilterGenerator(''); setFilterTrainer(''); setFilterSubcampaign(''); }} className={`py-2.5 px-4 text-xs font-bold border-b-2 flex items-center gap-2 ${surveySection === section ? 'border-fuchsia-600 text-fuchsia-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
             <Icon className="w-4 h-4" />{label}

@@ -356,6 +356,8 @@ export interface TrainingSurvey {
   grupo_ojt?: string;
   subcampaña?: string;
   supervisor_nombres?: string[];
+  automatico?: boolean;
+  source_confirmation_id?: string;
 }
 
 export interface SurveyResponse {

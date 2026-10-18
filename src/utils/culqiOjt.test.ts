@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createRequire } from 'node:module';
 import { getPostgresPool, closePostgresPool } from '../../backend/src/postgres';
+import { dataDb } from '../../backend/src/hybridDb';
 import { isInitialAttendanceComplete, isBusinessDate } from '../../backend/src/services/trainingSchedule';
 
 test('initial attendance uses the existing withdrawal exemption without inventing attendance', () => {
@@ -25,7 +26,7 @@ test('Culqi assignment enables legacy and split attendance transactionally witho
     session = { id: 's', campaña: 'Culqi', generation_code: 'CU', fecha_inicio: '2026-10-05', estado: 'En curso',
       training_days: split ? 5 : 10, ...(split ? { training_model: 'split_ojt' } : {}),
       formador_capacitacion_inicial_ids: ['initial'], formador_ojt_ids: ['ojt'], formador_ojt_nombres: ['OJT'] };
-    participants = [{ id: 'p', training_session_id: 's' }, { id: 'withdrawn', training_session_id: 's', estado_final: 'Desistió' }];
+    participants = [{ id: 'p', training_session_id: 's', evaluacion_nota: 16 }, { id: 'withdrawn', training_session_id: 's', estado_final: 'Desistió' }];
     attendance = [1, 2, 3, 4, 5].map((dia) => ({ id: `initial-${dia}`, participant_id: 'p', training_session_id: 's', dia, estado_asistencia: 'Asistió' }));
     module = undefined; inserts = 0;
   };
@@ -34,10 +35,6 @@ test('Culqi assignment enables legacy and split attendance transactionally witho
     if (sql === 'BEGIN') { snapshot = structuredClone({ session, attendance, module }); return rows([]); }
     if (sql === 'ROLLBACK') { ({ session, attendance, module } = snapshot); return rows([]); }
     if (sql === 'COMMIT' || sql.includes('pg_advisory_xact_lock')) return rows([]);
-    if (sql.startsWith('SELECT') && sql.includes("collection_name = 'sessions'")) return rows([session]);
-    if (sql.startsWith('SELECT') && sql.includes("collection_name = 'participants'")) return rows(participants);
-    if (sql.startsWith('SELECT') && sql.includes("collection_name = 'attendance'")) return rows(attendance);
-    if (sql.startsWith('SELECT') && sql.includes("collection_name = 'ojt_modules'")) return rows(module ? [module] : []);
     if (sql.includes('jsonb_array_elements')) {
       inserts++;
       const records: Doc[] = JSON.parse(params[0]);
@@ -45,12 +42,22 @@ test('Culqi assignment enables legacy and split attendance transactionally witho
       attendance.push(...missing);
       return rows(missing);
     }
+    if (sql.startsWith('SELECT') && sql.includes("collection_name = 'sessions'")) return rows([session]);
+    if (sql.startsWith('SELECT') && sql.includes("collection_name = 'participants'")) return rows(participants);
+    if (sql.startsWith('SELECT') && sql.includes("collection_name = 'attendance'")) return rows(attendance);
+    if (sql.startsWith('SELECT') && sql.includes("collection_name = 'ojt_modules'")) return rows(module ? [module] : []);
     if (sql.includes("VALUES ('ojt_modules'")) { module = JSON.parse(params[1]); return rows([]); }
     if (sql.startsWith('UPDATE') && sql.includes("collection_name = 'sessions'")) { session = JSON.parse(params[1]); return rows([]); }
     throw new Error(`Unexpected SQL: ${sql}`);
   } };
   t.mock.method(pool, 'query', async () => rows([]));
   t.mock.method(pool, 'connect', async () => client);
+  t.mock.method(dataDb, 'collection', () => ({
+    doc: () => ({
+      create: async () => {},
+      get: async () => ({ exists: false, data: () => ({}) }),
+    }),
+  }) as any);
   const require = createRequire(new URL('../../backend/package.json', import.meta.url));
   const { initializeApp, deleteApp } = require('firebase-admin/app');
   const app = initializeApp({ projectId: 'culqi-isolated-test' });
@@ -69,7 +76,7 @@ test('Culqi assignment enables legacy and split attendance transactionally witho
       const historical = structuredClone(attendance);
       const result = await invoke('Formador', 'initial');
       assert.equal(result.status, 200);
-      assert.equal(result.body.attendance.length, 10);
+      assert.equal(result.body.attendance.length, 5);
       assert.equal(inserts, 1);
       assert.equal(session.training_model, undefined);
       for (const original of historical) assert.deepEqual(attendance.find((record) => record.id === original.id), original);
@@ -77,7 +84,7 @@ test('Culqi assignment enables legacy and split attendance transactionally witho
       assert.ok(result.body.attendance.every((record: Doc) => isBusinessDate(record.fecha)));
       const id = module!.id;
       assert.equal((await invoke()).status, 200);
-      assert.equal(attendance.length, 15);
+      assert.equal(attendance.length, 10);
       assert.equal(module!.id, id);
       assert.equal(inserts, 1);
     });
@@ -88,7 +95,7 @@ test('Culqi assignment enables legacy and split attendance transactionally witho
       assert.equal(module, undefined);
       attendance[4].estado_asistencia = 'Feriado';
       assert.equal((await invoke()).status, 200);
-      assert.equal(attendance.length, 15);
+      assert.equal(attendance.length, 10);
       assert.equal(session.training_model, 'split_ojt');
     });
     await t.test('permissions, missing trainer, closed training and excluded campaigns remain blocked', async () => {
@@ -108,7 +115,7 @@ test('Culqi assignment enables legacy and split attendance transactionally witho
       attendance = attendance.filter((record) => !(record.participant_id === 'p' && record.dia === 10));
       assert.equal((await invoke()).status, 200);
       assert.equal(module!.id, id);
-      assert.equal(attendance.length, 15);
+      assert.equal(attendance.length, 10);
       module!.estado = 'Cerrado';
       assert.equal((await invoke()).status, 409);
     });

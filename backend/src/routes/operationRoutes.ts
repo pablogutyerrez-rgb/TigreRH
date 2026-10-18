@@ -6,6 +6,7 @@ import { dataDb as adminDb, DELETE_FIELD } from '../hybridDb.js';
 import { updateParticipantDocument } from '../services/participantDocumentService.js';
 import { isInitialOnlyCampaign } from '../services/trainingSchedule.js';
 import { isAttendanceMinutesOpen, peruAttendanceMinutes, isOperationalOjtClosed } from '../services/attendancePolicy.js';
+import { ensureOjtSurvey, ensureOperationsSurvey, isEligibleForOjt } from '../services/surveyAutomationService.js';
 import {
   deleteCvFromGoogleDrive,
   downloadCvFromGoogleDrive,
@@ -128,6 +129,16 @@ const ownsSession = async (req: AuthenticatedRequest, sessionId: string) => {
       (Array.isArray(data?.reclutador_ids) && data.reclutador_ids.includes(req.user!.uid));
   }
   return true;
+};
+
+const syncOjtSurveyForEligibleParticipant = async (
+  participant: Record<string, unknown>,
+  session: Record<string, unknown> | undefined,
+  userId: string,
+) => {
+  if (!session?.ojt_module_id || !isEligibleForOjt(participant)) return;
+  const module = await adminDb.collection('ojt_modules').doc(String(session.ojt_module_id)).get();
+  if (module.exists) await ensureOjtSurvey(session, { id: module.id, ...module.data() }, userId);
 };
 
 const canAccessParticipant = async (req: AuthenticatedRequest, participantId: string) => {
@@ -352,9 +363,11 @@ router.put(
       res.status(403).json({ message: 'Solo Admin puede confirmar altas.' });
       return;
     }
+    let sessionData: Record<string, unknown> | undefined;
     if (parsed.data.estado_alta === 'Alta confirmada') {
       const session = await adminDb.collection('sessions').doc(parsed.data.training_session_id).get();
-      if (session.data()?.training_model === 'split_ojt' && !isInitialOnlyCampaign(session.data()?.campaña)) {
+      sessionData = session.data();
+      if (sessionData?.training_model === 'split_ojt' && !isInitialOnlyCampaign(sessionData?.campaña)) {
         const participant = await adminDb.collection('participants').doc(String(parsed.data.participant_id || '')).get();
         const dayTen = await adminDb.collection('attendance').where('participant_id', '==', parsed.data.participant_id).get();
         if (!session.data()?.ojt_module_id || participant.data()?.training_session_id !== parsed.data.training_session_id ||
@@ -385,6 +398,9 @@ router.put(
       );
     }
     await writer.close();
+    if (parsed.data.estado_alta === 'Alta confirmada' && sessionData) {
+      await ensureOperationsSurvey({ id: parsed.data.training_session_id, ...sessionData }, req.params.id, req.user!.uid);
+    }
     res.json({ ok: true });
   },
 );
@@ -459,6 +475,7 @@ router.put(
         return;
       }
       await adminDb.collection('participants').doc(req.params.id).set(sanitized, { merge: true });
+      await syncOjtSurveyForEligibleParticipant({ ...currentData, ...sanitized }, sessionData, req.user!.uid);
       res.json({ ok: true });
       return;
     }
@@ -467,11 +484,14 @@ router.put(
       if (isInitialTrainer(session.data(), req.user!.uid) || isOjtTrainer(session.data(), req.user!.uid)) {
         const { estado_alta, ...safeData } = parsed.data;
         await adminDb.collection('participants').doc(req.params.id).set(safeData, { merge: true });
+        await syncOjtSurveyForEligibleParticipant({ ...currentData, ...safeData }, session.data(), req.user!.uid);
         res.json({ ok: true });
         return;
       }
     }
     await adminDb.collection('participants').doc(req.params.id).set(parsed.data, { merge: true });
+    const session = await adminDb.collection('sessions').doc(parsed.data.training_session_id).get();
+    await syncOjtSurveyForEligibleParticipant({ ...currentData, ...parsed.data }, session.data(), req.user!.uid);
     res.json({ ok: true });
   },
 );

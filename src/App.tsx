@@ -720,14 +720,16 @@ export default function App() {
     // Automatically create survey template
     const genCode = sessionObj.generation_code;
     const surveyObj: TrainingSurvey = {
-      id: `srv-${Math.random().toString(36).substring(2, 11)}`,
+      id: `srv-initial-${sId}`,
       training_session_id: sId,
       codigo_generacion: genCode,
       campaña: sessionObj.campaña,
       formador_id: sessionObj.formador_id,
       formador_nombre: sessionObj.formador_nombre,
       estado: 'Deshabilitada',
-      token: genCode.trim().replace(/\s+/g, '-')
+      token: `INI-${genCode}`.trim().replace(/\s+/g, '-').toUpperCase(),
+      survey_type: 'inicial',
+      automatico: true,
     };
     // Add its participants
     const partsWithId = uploadedParticipants.map((p, idx) => {
@@ -1517,10 +1519,15 @@ export default function App() {
           : (outcome === 'No apto' ? 'Completó capacitación' : part.estado_final))
         : part.estado_final,
     };
-    void persistParticipant(nextParticipant).catch((error) => {
-      console.error('Error persisting participant outcome:', error);
-      alert(error instanceof Error ? error.message : 'No se pudo guardar el resultado de formación.');
-    });
+    void (async () => {
+      try {
+        await persistParticipant(nextParticipant);
+        await refreshSurveyProgress();
+      } catch (error) {
+        console.error('Error persisting participant outcome or syncing survey:', error);
+        alert(error instanceof Error ? error.message : 'No se pudo guardar el resultado de formación.');
+      }
+    })();
 
     setParticipants(prev => prev.map(p => {
       if (p.id === pId) {
@@ -1739,10 +1746,15 @@ export default function App() {
       id: existingIdx !== -1 ? confirmations[existingIdx].id : `conf-${Math.random().toString(36).substring(2, 11)}`,
       fecha_registro: new Date().toISOString()
     };
-    void persistConfirmation(confirmationObj).catch((error) => {
-      console.error('Error persisting confirmation:', error);
-      alert(error instanceof Error ? error.message : 'No se pudo guardar el alta.');
-    });
+    void (async () => {
+      try {
+        await persistConfirmation(confirmationObj);
+        await refreshSurveyProgress();
+      } catch (error) {
+        console.error('Error persisting confirmation or syncing survey:', error);
+        alert(error instanceof Error ? error.message : 'No se pudo guardar el alta.');
+      }
+    })();
 
     if (existingIdx !== -1) {
       setConfirmations(prev => {

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Router, type Response } from 'express';
 import { z } from 'zod';
 import { dataDb as adminDb } from '../hybridDb.js';
+import { isEligibleForOjt } from '../services/surveyAutomationService.js';
 
 const router = Router();
 const tokenSchema = z.string().trim().min(1).max(160);
@@ -62,7 +63,7 @@ const ratingSchema = z.object({ q1: z.number().int().min(1).max(5), q2: z.number
 const initialSchema = ratingSchema.extend({ dni: dniSchema, comentario_positivo: z.string().trim().min(1).max(500), aspecto_mejora: z.string().trim().min(1).max(500) });
 const ojtSchema = ratingSchema.extend({ dni: dniSchema, comentario_positivo: z.string().trim().max(500).optional().default(''), aspecto_mejora: z.string().trim().max(500).optional().default('') });
 const operationsSchema = ratingSchema.extend({
-  submission_nonce: z.string().uuid(), supervisor_nombre: z.string().trim().min(1).max(160),
+  submission_nonce: z.string().uuid(), supervisor_nombre: z.string().trim().max(160).optional().default(''),
   dificultades: z.array(z.enum(['Herramientas/sistemas', 'Metas de ventas', 'Falta de acompañamiento', 'Comunicación o trato', 'Condiciones laborales', 'Motivos personales', 'Otras dificultades', 'Ninguna'])).max(8).optional().default([]),
   intencion_salida: z.enum(['Sí', 'No', 'Tengo dudas', 'Prefiero no responder']).optional(), motivo_salida: z.string().trim().max(500).optional().default(''), comentario_q11: z.string().trim().max(500).optional().default(''), comentario_q12: z.string().trim().max(500).optional().default(''),
 });
@@ -108,6 +109,7 @@ router.get('/:token', async (req, res: Response) => {
   const participantDoc = publicSurvey.survey_type === 'ojt' ? await findParticipantForOjt(survey, dni.data) : await findParticipantForInitial(String(survey.training_session_id || ''), dni.data);
   if (!participantDoc) return void res.status(404).json({ message: 'No se encontro tu registro en esta capacitación. Verifica tu DNI.' });
   const participant = { id: participantDoc.id, ...participantDoc.data() } as Record<string, unknown>;
+  if (publicSurvey.survey_type === 'ojt' && !isEligibleForOjt(participant)) return void res.status(403).json({ message: 'Debes contar con nota final mayor o igual a 16 para acceder al acompañamiento OJT.' });
   const existing = await adminDb.collection('responses').where('training_survey_id', '==', survey.id).get();
   if (existing.docs.some((doc) => String(doc.data().participant_id || '') === participantDoc.id || normalizeDocument(doc.data().dni) === normalizeDocument(dni.data))) return void res.status(409).json({ message: 'Ya registraste esta encuesta de satisfacción.' });
   const attendance = publicSurvey.survey_type === 'inicial' ? (await adminDb.collection('attendance').where('participant_id', '==', participantDoc.id).get()).docs.map((doc) => ({ id: doc.id, ...doc.data() })) : [];
@@ -128,10 +130,10 @@ router.post('/:token/responses', async (req, res: Response) => {
     const nonce = await adminDb.collection('survey_public_nonces').doc(payload.data.submission_nonce).get();
     if (!nonce.exists || nonce.data()?.survey_id !== survey.id || nonce.data()?.used_at || Number(nonce.data()?.expires_at || 0) < Date.now()) return void res.status(409).json({ message: 'El enlace de envío ya no es válido. Actualiza la página e inténtalo nuevamente.' });
     const supervisor = publicSurvey.supervisor_nombres.find((name) => normalize(name) === normalize(payload.data.supervisor_nombre));
-    if (!supervisor) return void res.status(400).json({ message: 'Selecciona un supervisor válido para este enlace.' });
+    if (publicSurvey.supervisor_nombres.length > 0 && !supervisor) return void res.status(400).json({ message: 'Selecciona un supervisor válido para este enlace.' });
     const { submission_nonce, supervisor_nombre: _supervisorNombre, ...operationAnswers } = payload.data;
     const score = calculate(payload.data); const id = `resp-${survey.id}-${randomUUID()}`;
-    const response = { id, training_survey_id: survey.id, survey_type: 'operaciones', campaña: publicSurvey.campaña, campana: publicSurvey.campaña, subcampaña: publicSurvey.subcampaña, codigo_generacion: '', formador_id: '', formador_nombre: '', supervisor_nombre: supervisor, fecha_respuesta: new Date().toISOString(), ...operationAnswers, total_score: score.total_score, final_score_20: score.final_score_20, classification: score.classification, promedio_individual: Number((score.values.reduce((sum, value) => sum + value, 0) / 8).toFixed(2)) };
+    const response = { id, training_survey_id: survey.id, survey_type: 'operaciones', campaña: publicSurvey.campaña, campana: publicSurvey.campaña, subcampaña: publicSurvey.subcampaña, codigo_generacion: '', formador_id: '', formador_nombre: '', supervisor_nombre: supervisor || '', fecha_respuesta: new Date().toISOString(), ...operationAnswers, total_score: score.total_score, final_score_20: score.final_score_20, classification: score.classification, promedio_individual: Number((score.values.reduce((sum, value) => sum + value, 0) / 8).toFixed(2)) };
     await adminDb.collection('responses').doc(id).create(response);
     await adminDb.collection('survey_public_nonces').doc(payload.data.submission_nonce).set({ used_at: new Date().toISOString() }, { merge: true });
     return void res.status(201).json({ ok: true, response });
@@ -140,6 +142,7 @@ router.post('/:token/responses', async (req, res: Response) => {
   if (!payload.success) return void res.status(400).json({ message: 'La respuesta contiene datos invalidos.' });
   const participantDoc = publicSurvey.survey_type === 'ojt' ? await findParticipantForOjt(survey, payload.data.dni) : await findParticipantForInitial(String(survey.training_session_id || ''), payload.data.dni);
   if (!participantDoc) return void res.status(404).json({ message: 'No se encontro el participante.' });
+  if (publicSurvey.survey_type === 'ojt' && !isEligibleForOjt(participantDoc.data())) return void res.status(403).json({ message: 'Debes contar con nota final mayor o igual a 16 para acceder al acompañamiento OJT.' });
   if (publicSurvey.survey_type === 'inicial') {
     const attendance = await adminDb.collection('attendance').where('participant_id', '==', participantDoc.id).get();
     if (!attendance.docs.some((doc) => Number(doc.data().dia) === 5)) return void res.status(403).json({ message: 'No existe un registro de asistencia para el Día 5 de capacitación.' });

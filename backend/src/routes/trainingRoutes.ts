@@ -6,6 +6,7 @@ import { getPostgresPool } from '../postgres.js';
 import { randomUUID } from 'node:crypto';
 import { getScheduledTrainingDays, hasCampaignOjt, isBusinessDate, isInitialAttendanceComplete } from '../services/trainingSchedule.js';
 import { isOperationalOjtClosed } from '../services/attendancePolicy.js';
+import { buildInitialSurvey, ensureOjtSurvey, isEligibleForOjt } from '../services/surveyAutomationService.js';
 import {
   type AuthenticatedRequest,
   requireAuth,
@@ -59,6 +60,7 @@ const businessDay = (start: string, day: number) => {
 router.post('/:sessionId/assign-ojt', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   await ensureHybridSchema();
   const client = await getPostgresPool().connect();
+  let committed = false;
   try {
     await client.query('BEGIN');
     const sessionRow = await client.query(
@@ -96,8 +98,10 @@ router.post('/:sessionId/assign-ojt', requireAuth, async (req: AuthenticatedRequ
       initialAttendance.rows.map((row: { payload: any }) => row.payload))) {
       throw Object.assign(new Error('Completa las asistencias de los dias 1 al 5 para todos los participantes.'), { status: 409 });
     }
-    const eligibleIds = participants.rows.map((row: { document_id: string }) => row.document_id);
-    if (eligibleIds.length === 0) throw Object.assign(new Error('No hay participantes habilitados para OJT.'), { status: 409 });
+    const eligibleIds = participants.rows
+      .filter((row: { payload: Record<string, unknown> }) => isEligibleForOjt(row.payload))
+      .map((row: { document_id: string }) => row.document_id);
+    if (eligibleIds.length === 0) throw Object.assign(new Error('No hay participantes con nota final mayor o igual a 16 habilitados para OJT.'), { status: 409 });
 
     const existing = session.ojt_module_id
       ? await client.query(`SELECT payload FROM tigre_rh.current_documents WHERE collection_name = 'ojt_modules' AND document_id = $1 AND is_deleted = FALSE`, [session.ojt_module_id])
@@ -129,6 +133,8 @@ router.post('/:sessionId/assign-ojt', requireAuth, async (req: AuthenticatedRequ
     }
     if (session.ojt_module_id && previous) {
       await client.query('COMMIT');
+      committed = true;
+      await ensureOjtSurvey(session, previous, req.user!.uid);
       res.json({ module: previous, session, attendance: ojtAttendance });
       return;
     }
@@ -165,9 +171,11 @@ router.post('/:sessionId/assign-ojt', requireAuth, async (req: AuthenticatedRequ
       [session.id, JSON.stringify(assigned)],
     );
     await client.query('COMMIT');
+    committed = true;
+    await ensureOjtSurvey(assigned, moduleData, req.user!.uid);
     res.json({ module: moduleData, session: assigned, attendance: ojtAttendance });
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (!committed) await client.query('ROLLBACK');
     const failure = error as Error & { status?: number };
     res.status(failure.status || 500).json({ message: failure.message || 'No se pudo asignar OJT.' });
   } finally {
@@ -249,7 +257,7 @@ router.post('/', canManageTraining, async (req: AuthenticatedRequest, res: Respo
     return;
   }
 
-  const { survey, participants, attendance } = parsed.data;
+  const { participants, attendance } = parsed.data;
   const start = String(parsed.data.session.fecha_inicio || '');
   if (!isBusinessDate(start)) {
     res.status(400).json({ message: 'La capacitacion debe iniciar de lunes a viernes.' });
@@ -282,9 +290,10 @@ router.post('/', canManageTraining, async (req: AuthenticatedRequest, res: Respo
     return;
   }
 
+  const initialSurvey = buildInitialSurvey(session, req.user!.uid);
   const writer = adminDb.bulkWriter();
   writer.set(adminDb.collection('sessions').doc(session.id), session);
-  writer.set(adminDb.collection('surveys').doc(survey.id), survey);
+  writer.set(adminDb.collection('surveys').doc(initialSurvey.id), initialSurvey);
   participants.forEach((participant) =>
     writer.set(adminDb.collection('participants').doc(participant.id), participant),
   );

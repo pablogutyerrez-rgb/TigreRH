@@ -6,7 +6,7 @@ import { publicSurveyRoutes } from '../../backend/src/routes/publicSurveyRoutes'
 import { findParticipantSurveyResponse, getSurveyParticipants } from './surveyCompletion';
 import type { AttendanceRecord, OjtModule, Participant, TrainingSession, TrainingSurvey } from '../types';
 
-const participant = { id: 'p1', training_session_id: 's1', dni: '130365', nombres: 'Test', apellidos: 'Survey' } as Participant;
+const participant = { id: 'p1', training_session_id: 's1', dni: '130365', nombres: 'Test', apellidos: 'Survey', evaluacion_nota: 16 } as Participant;
 const session = { id: 's1', ojt_module_id: 'm1', estado: 'Capacitación cerrada' } as TrainingSession;
 const module = { id: 'm1', generation_ids: ['s1'], participant_ids: ['p2'] } as OjtModule;
 const initial = { id: 'initial', training_session_id: 's1', token: 'INITIAL', estado: 'Habilitada' } as TrainingSurvey;
