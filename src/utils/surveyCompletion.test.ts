@@ -7,8 +7,8 @@ import { findParticipantSurveyResponse, getSurveyParticipants } from './surveyCo
 import type { AttendanceRecord, OjtModule, Participant, TrainingSession, TrainingSurvey } from '../types';
 
 const participant = { id: 'p1', training_session_id: 's1', dni: '130365', nombres: 'Test', apellidos: 'Survey', evaluacion_nota: 16 } as Participant;
-const session = { id: 's1', ojt_module_id: 'm1', estado: 'Capacitación cerrada' } as TrainingSession;
-const module = { id: 'm1', generation_ids: ['s1'], participant_ids: ['p2'] } as OjtModule;
+const session = { id: 's1', ojt_module_id: 'm1', estado: 'Capacitación cerrada', campaña: 'Culqi', generation_code: 'CAP-CU-01', formador_ojt_ids: ['ojt-1'], formador_ojt_nombres: ['Formador OJT'] } as TrainingSession;
+const module = { id: 'm1', generation_ids: ['s1'], participant_ids: ['p1', 'p2'] } as OjtModule;
 const initial = { id: 'initial', training_session_id: 's1', token: 'INITIAL', estado: 'Habilitada' } as TrainingSurvey;
 const ojt = { id: 'ojt', training_session_id: '', ojt_module_id: 'm1', survey_type: 'ojt', token: 'OJT', estado: 'Habilitada' } as TrainingSurvey;
 const operations = { id: 'ops', training_session_id: '', survey_type: 'operaciones', token: 'OPS', estado: 'Habilitada', supervisor_nombres: ['Supervisor'] } as TrainingSurvey;
@@ -107,6 +107,9 @@ test('public survey routes: availability, duplicates and anonymous operations', 
     assert.equal(store.responses.size, 2);
     assert.ok(findParticipantSurveyResponse('initial', participant, [...store.responses.values()] as any));
     assert.ok(findParticipantSurveyResponse('ojt', participant, [...store.responses.values()] as any));
+    const ojtResponse = [...store.responses.values()].find((response) => response.training_survey_id === 'ojt');
+    assert.deepEqual({ session: ojtResponse.training_session_id, module: ojtResponse.ojt_module_id, campaign: ojtResponse.campaña, generation: ojtResponse.codigo_generacion, trainer: ojtResponse.formador_nombre },
+      { session: 's1', module: 'm1', campaign: 'Culqi', generation: 'CAP-CU-01', trainer: 'Formador OJT' });
     store.responses.set('historical', { training_survey_id: 'initial', dni: 130365 });
     assert.equal((await invoke('/:token/responses', 'INITIAL', answers)).status, 409);
   });

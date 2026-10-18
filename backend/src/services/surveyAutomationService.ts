@@ -10,6 +10,7 @@ export const isEligibleForOjt = (participant: RecordData) =>
   Number(participant.evaluacion_nota) >= OJT_MINIMUM_FINAL_SCORE;
 
 const cleanToken = (value: unknown) => String(value || '').trim().replace(/\s+/g, '-').toUpperCase();
+const uniqueText = (values: unknown[]) => [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))];
 
 const operationSupervisors = (campaign: string) => {
   const normalized = campaign.trim().toLowerCase();
@@ -56,14 +57,18 @@ export const ensureInitialSurvey = async (session: RecordData, createdById = '')
 
 export const buildOjtSurvey = (session: RecordData, module: RecordData, createdById = '') => {
   const id = `srv-ojt-${module.id}`;
-  const code = String(session.generation_code || session.nombre_generacion || module.nombre || module.id);
+  const groupName = String(module.nombre || module.id);
+  const generationCodes = uniqueText([...(Array.isArray(module.generation_codes) ? module.generation_codes : []), session.generation_code, session.nombre_generacion]);
+  const campaigns = uniqueText([...(Array.isArray(module.grupo_campañas) ? module.grupo_campañas : []), session.campaña]);
   return {
     id,
-    training_session_id: String(session.id),
+    training_session_id: '',
     ojt_module_id: String(module.id),
-    grupo_ojt: String(module.nombre || ''),
-    codigo_generacion: code,
-    campaña: String(session.campaña || ''),
+    grupo_ojt: groupName,
+    grupo_generaciones: generationCodes,
+    grupo_campañas: campaigns,
+    codigo_generacion: groupName,
+    campaña: campaigns.join(', '),
     formador_id: String((module.formador_ojt_ids || [])[0] || ''),
     formador_nombre: Array.isArray(module.formador_ojt_nombres) ? module.formador_ojt_nombres.join(', ') : '',
     estado: 'Deshabilitada',
@@ -78,7 +83,30 @@ export const buildOjtSurvey = (session: RecordData, module: RecordData, createdB
 export const ensureOjtSurvey = async (session: RecordData, module: RecordData, createdById = '') => {
   if (!hasCampaignOjt(session.campaña) || !module?.id) return null;
   const survey = buildOjtSurvey(session, module, createdById);
-  return createIfMissing('surveys', survey.id, survey);
+  const ref = adminDb.collection('surveys').doc(survey.id);
+  const existing = await ref.get();
+  if (!existing.exists) {
+    await ref.create(survey);
+    return survey;
+  }
+  const current = existing.data() || {};
+  const grupo_generaciones = uniqueText([...(Array.isArray(current.grupo_generaciones) ? current.grupo_generaciones : []), ...survey.grupo_generaciones]);
+  const grupo_campañas = uniqueText([...(Array.isArray(current.grupo_campañas) ? current.grupo_campañas : []), ...survey.grupo_campañas]);
+  const synchronized = {
+    ...survey,
+    ...current,
+    training_session_id: '',
+    ojt_module_id: survey.ojt_module_id,
+    grupo_ojt: survey.grupo_ojt,
+    grupo_generaciones,
+    grupo_campañas,
+    codigo_generacion: survey.codigo_generacion,
+    campaña: grupo_campañas.join(', '),
+    formador_id: survey.formador_id,
+    formador_nombre: survey.formador_nombre,
+  };
+  await ref.set(synchronized, { merge: true });
+  return synchronized;
 };
 
 export const buildOperationsSurvey = (

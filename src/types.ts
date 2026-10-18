@@ -354,6 +354,8 @@ export interface TrainingSurvey {
   survey_type?: SurveyType;
   ojt_module_id?: string;
   grupo_ojt?: string;
+  grupo_generaciones?: string[];
+  grupo_campañas?: string[];
   subcampaña?: string;
   supervisor_nombres?: string[];
   automatico?: boolean;
@@ -363,6 +365,8 @@ export interface TrainingSurvey {
 export interface SurveyResponse {
   id: string;
   training_survey_id: string;
+  training_session_id?: string;
+  ojt_module_id?: string;
   participant_id?: string;
   dni?: string;
   nombre_ejecutivo?: string;

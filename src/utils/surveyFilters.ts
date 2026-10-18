@@ -21,8 +21,10 @@ export const filterSurveys = (surveys: TrainingSurvey[], sessions: TrainingSessi
   const byId = new Map(sessions.map((session) => [session.id, session]));
   return surveys.filter((survey) => {
     const session = byId.get(survey.training_session_id);
-    const campaign = session?.campaña || survey.campaña;
-    const generation = session?.generation_code || session?.nombre_generacion || survey.codigo_generacion;
+    const campaigns = survey.survey_type === 'ojt' && survey.grupo_campañas?.length
+      ? survey.grupo_campañas : [session?.campaña || survey.campaña];
+    const generations = survey.survey_type === 'ojt' && survey.grupo_generaciones?.length
+      ? survey.grupo_generaciones : [session?.generation_code || session?.nombre_generacion || survey.codigo_generacion];
     const trainers = survey.survey_type === 'operaciones'
       ? []
       : survey.survey_type === 'ojt'
@@ -31,8 +33,8 @@ export const filterSurveys = (surveys: TrainingSurvey[], sessions: TrainingSessi
     const start = survey.start_date || session?.fecha_inicio || '';
     const end = survey.end_date || session?.fecha_fin || '';
     return survey.estado !== 'Eliminada' &&
-      (!filters.campaign || normalize(campaign) === normalize(filters.campaign)) &&
-      (!filters.generation || normalize(generation) === normalize(filters.generation)) &&
+      (!filters.campaign || campaigns.some((campaign) => normalize(campaign) === normalize(filters.campaign))) &&
+      (!filters.generation || generations.some((generation) => normalize(generation) === normalize(filters.generation))) &&
       (!filters.trainer || trainers.includes(filters.trainer)) &&
       (!filters.type || normalize(session?.tipo_capacitacion || survey.training_type) === normalize(filters.type)) &&
       overlapsDateRange(start, end, filters.from, filters.to);

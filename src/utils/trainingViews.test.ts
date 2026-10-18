@@ -52,6 +52,12 @@ test('los seis filtros de encuestas funcionan solos y combinados', () => {
   assert.deepEqual(filterSurveys(surveys, sessions, { ...empty, type: 'Especial', trainer: 'f4' }).map((item) => item.id), ['legacy']);
 });
 
+test('un grupo OJT responde por cada campaña y generación que contiene', () => {
+  const group = { id: 'ojt', survey_type: 'ojt', ojt_module_id: 'module', campaña: 'Entel Empresas RUC 10, Entel Empresas RUC 20', codigo_generacion: 'OJT Entel', grupo_campañas: ['Entel Empresas RUC 10', 'Entel Empresas RUC 20'], grupo_generaciones: ['CAP-R10', 'CAP-R20'], formador_id: 'f2', estado: 'Habilitada' } as TrainingSurvey;
+  assert.deepEqual(filterSurveys([group], [], { ...empty, campaign: 'Entel Empresas RUC 20' }).map((item) => item.id), ['ojt']);
+  assert.deepEqual(filterSurveys([group], [], { ...empty, generation: 'CAP-R10' }).map((item) => item.id), ['ojt']);
+});
+
 test('Excel de una hoja preserva postulantes y diez dias sin otros registros', () => {
   const people = [
     { id: 'pa', training_session_id: 'a', nombres: 'Ana', apellidos: 'Perez', dni: '00123456', observacion: 'x'.repeat(33000) },

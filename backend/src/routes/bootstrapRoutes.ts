@@ -171,16 +171,18 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res: Response) =>
         readStringField(survey, ['campaña', 'campana', 'campa�a']) ||
         readStringField(session, ['campaña', 'campana', 'campa�a']);
       const generationCode =
+        readStringField(response, ['codigo_generacion']) ||
         readStringField(session, ['generation_code', 'nombre_generacion']) ||
-        readStringField(survey, ['codigo_generacion']) ||
-        readStringField(response, ['codigo_generacion']);
+        readStringField(survey, ['codigo_generacion']);
       const isOjtSurvey = survey?.survey_type === 'ojt';
       const trainerId =
+        (isOjtSurvey ? readStringField(response, ['formador_id']) : '') ||
         (isOjtSurvey ? readStringField(survey, ['formador_id']) : '') ||
         readStringField(session, ['formador_id']) ||
         readStringField(survey, ['formador_id']) ||
         readStringField(response, ['formador_id']);
       const trainerName =
+        (isOjtSurvey ? readStringField(response, ['formador_nombre']) : '') ||
         (isOjtSurvey ? readStringField(survey, ['formador_nombre']) : '') ||
         readStringField(session, ['formador_nombre']) ||
         readStringField(survey, ['formador_nombre']) ||

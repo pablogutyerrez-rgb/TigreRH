@@ -75,9 +75,14 @@ const calculate = (answers: z.infer<typeof ratingSchema>) => {
 const findParticipantForOjt = async (survey: Record<string, unknown>, dni: string) => {
   const context = await getOjtContext(survey);
   const participantIds = new Set((Array.isArray(context?.module.participant_ids) ? context!.module.participant_ids : []).map(String));
-  const sessionIds = new Set((context?.sessions || []).map((session) => String(session.id)));
+  const sessionsById = new Map((context?.sessions || []).map((session) => [String(session.id), session]));
   const participants = await adminDb.collection('participants').get();
-  return participants.docs.find((doc) => normalizeDocument(doc.data().dni) === normalizeDocument(dni) && (participantIds.has(doc.id) || sessionIds.has(String(doc.data().training_session_id || '')))) || null;
+  const participantDoc = participants.docs.find((doc) => normalizeDocument(doc.data().dni) === normalizeDocument(dni) && (
+    participantIds.has(doc.id) || (participantIds.size === 0 && sessionsById.has(String(doc.data().training_session_id || '')))
+  ));
+  if (!participantDoc) return null;
+  const session = sessionsById.get(String(participantDoc.data().training_session_id || ''));
+  return session ? { participantDoc, session } : null;
 };
 const findParticipantForInitial = async (sessionId: string, dni: string) => {
   const participants = await adminDb.collection('participants').where('training_session_id', '==', sessionId).get();
@@ -106,7 +111,8 @@ router.get('/:token', async (req, res: Response) => {
   if (publicSurvey.estado !== 'Habilitada') return void res.status(410).json({ message: 'Esta encuesta no se encuentra habilitada.' });
   if (publicSurvey.survey_type === 'operaciones') return void res.status(400).json({ message: 'Esta encuesta es anónima y no requiere DNI.' });
   const survey = { id: surveyDoc.id, ...surveyDoc.data() } as Record<string, unknown>;
-  const participantDoc = publicSurvey.survey_type === 'ojt' ? await findParticipantForOjt(survey, dni.data) : await findParticipantForInitial(String(survey.training_session_id || ''), dni.data);
+  const ojtParticipant = publicSurvey.survey_type === 'ojt' ? await findParticipantForOjt(survey, dni.data) : null;
+  const participantDoc = ojtParticipant?.participantDoc || (publicSurvey.survey_type === 'ojt' ? null : await findParticipantForInitial(String(survey.training_session_id || ''), dni.data));
   if (!participantDoc) return void res.status(404).json({ message: 'No se encontro tu registro en esta capacitación. Verifica tu DNI.' });
   const participant = { id: participantDoc.id, ...participantDoc.data() } as Record<string, unknown>;
   if (publicSurvey.survey_type === 'ojt' && !isEligibleForOjt(participant)) return void res.status(403).json({ message: 'Debes contar con nota final mayor o igual a 16 para acceder al acompañamiento OJT.' });
@@ -140,7 +146,8 @@ router.post('/:token/responses', async (req, res: Response) => {
   }
   const payload = (publicSurvey.survey_type === 'ojt' ? ojtSchema : initialSchema).safeParse(req.body);
   if (!payload.success) return void res.status(400).json({ message: 'La respuesta contiene datos invalidos.' });
-  const participantDoc = publicSurvey.survey_type === 'ojt' ? await findParticipantForOjt(survey, payload.data.dni) : await findParticipantForInitial(String(survey.training_session_id || ''), payload.data.dni);
+  const ojtParticipant = publicSurvey.survey_type === 'ojt' ? await findParticipantForOjt(survey, payload.data.dni) : null;
+  const participantDoc = ojtParticipant?.participantDoc || (publicSurvey.survey_type === 'ojt' ? null : await findParticipantForInitial(String(survey.training_session_id || ''), payload.data.dni));
   if (!participantDoc) return void res.status(404).json({ message: 'No se encontro el participante.' });
   if (publicSurvey.survey_type === 'ojt' && !isEligibleForOjt(participantDoc.data())) return void res.status(403).json({ message: 'Debes contar con nota final mayor o igual a 16 para acceder al acompañamiento OJT.' });
   if (publicSurvey.survey_type === 'inicial') {
@@ -150,8 +157,15 @@ router.post('/:token/responses', async (req, res: Response) => {
   const existing = await adminDb.collection('responses').where('training_survey_id', '==', survey.id).get();
   if (existing.docs.some((doc) => String(doc.data().participant_id || '') === participantDoc.id || normalizeDocument(doc.data().dni) === normalizeDocument(payload.data.dni))) return void res.status(409).json({ message: 'Ya registraste esta encuesta de satisfacción.' });
   const participant = participantDoc.data(); const score = calculate(payload.data);
+  const participantSession = ojtParticipant?.session;
+  const participantTrainerIds = Array.isArray(participantSession?.formador_ojt_ids) ? participantSession.formador_ojt_ids : [];
+  const participantTrainerNames = Array.isArray(participantSession?.formador_ojt_nombres) ? participantSession.formador_ojt_nombres : [];
+  const campaign = participantSession ? readString(participantSession, ['campaña', 'campana', 'campa�a']) : publicSurvey.campaña;
+  const generation = participantSession ? readString(participantSession, ['generation_code', 'nombre_generacion']) : publicSurvey.codigo_generacion;
+  const trainerId = participantSession ? String(participantTrainerIds[0] || '') : publicSurvey.formador_id;
+  const trainerName = participantSession ? String(participantTrainerNames[0] || '') : publicSurvey.formador_nombre;
   const { dni, ...answers } = payload.data;
-  const response = { id: `resp-${survey.id}-${participantDoc.id}`, training_survey_id: survey.id, survey_type: publicSurvey.survey_type, participant_id: participantDoc.id, dni, nombre_ejecutivo: `${participant.nombres || ''} ${participant.apellidos || ''}`.trim(), campaña: publicSurvey.campaña, campana: publicSurvey.campaña, codigo_generacion: publicSurvey.codigo_generacion, formador_id: publicSurvey.formador_id, formador_nombre: publicSurvey.formador_nombre, fecha_respuesta: new Date().toISOString(), ...answers, q9: 5, q10: 5, p1: payload.data.q1, p2: payload.data.q2, p3: payload.data.q3, p4: payload.data.q4, p5: payload.data.q5, p6: payload.data.q6, p7: payload.data.q7, p8: payload.data.q8, total_score: score.total_score, final_score_20: score.final_score_20, classification: score.classification, promedio_individual: Number((score.values.reduce((sum, value) => sum + value, 0) / 8).toFixed(2)) };
+  const response = { id: `resp-${survey.id}-${participantDoc.id}`, training_survey_id: survey.id, survey_type: publicSurvey.survey_type, participant_id: participantDoc.id, dni, nombre_ejecutivo: `${participant.nombres || ''} ${participant.apellidos || ''}`.trim(), training_session_id: participantSession?.id || publicSurvey.training_session_id, ojt_module_id: publicSurvey.survey_type === 'ojt' ? publicSurvey.ojt_module_id : '', campaña: campaign, campana: campaign, codigo_generacion: generation, formador_id: trainerId, formador_nombre: trainerName, fecha_respuesta: new Date().toISOString(), ...answers, q9: 5, q10: 5, p1: payload.data.q1, p2: payload.data.q2, p3: payload.data.q3, p4: payload.data.q4, p5: payload.data.q5, p6: payload.data.q6, p7: payload.data.q7, p8: payload.data.q8, total_score: score.total_score, final_score_20: score.final_score_20, classification: score.classification, promedio_individual: Number((score.values.reduce((sum, value) => sum + value, 0) / 8).toFixed(2)) };
   try {
     await adminDb.collection('responses').doc(response.id).create(response);
   } catch (error) {
