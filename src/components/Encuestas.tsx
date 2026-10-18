@@ -75,6 +75,7 @@ interface EncuestasProps {
   onUpdateSurveyStatus: (surveyId: string, status: SurveyStatus) => Promise<void>;
   onAddSurvey?: (survey: TrainingSurvey) => Promise<void>;
   onUpdateSurveyAssignments: (surveyId: string, userIds: string[]) => Promise<void>;
+  onOpenOjtTraining: (sessionId: string) => void;
   onAuditLog: (
     accion: string,
     modulo: string,
@@ -103,7 +104,8 @@ export default function Encuestas({
   onAddSurvey,
   onUpdateSurveyAssignments,
   onAuditLog,
-  onOpenPublicSurvey
+  onOpenPublicSurvey,
+  onOpenOjtTraining,
 }: EncuestasProps) {
   // --- Tab State ---
   const [activeTab, setActiveTab] = useState<'dashboard' | 'comentarios' | 'respuestas' | 'monitoreo' | 'links' | 'configuracion'>('dashboard');
@@ -191,6 +193,11 @@ export default function Encuestas({
   };
 
   const getSurveyCampaignLabel = (survey: TrainingSurvey) => getSurveyCampaigns(survey).join(', ');
+
+  const getOjtTrainingSessions = (survey: TrainingSurvey) => {
+    const module = ojtModules.find((item) => item.id === survey.ojt_module_id);
+    return sessions.filter((session) => module?.generation_ids.includes(session.id) && hasCampaignOjt(session.campaña));
+  };
 
   const normalizeFilterValue = (value?: string) =>
     (value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
@@ -1742,8 +1749,8 @@ export default function Encuestas({
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-extrabold">
-                    <th className="p-3">Generación</th>
-                    <th className="p-3">Campaña</th>
+                    <th className="p-3">Grupo</th>
+                    <th className="p-3">Capacitaciones</th>
                     <th className="p-3">Formador</th>
                     <th className="p-3">Enlace</th>
                   </tr>
@@ -1755,7 +1762,17 @@ export default function Encuestas({
                     return (
                       <tr key={survey.id} className="hover:bg-slate-50/40 font-medium text-slate-700">
                         <td className="p-3 font-extrabold text-slate-800 whitespace-nowrap">{getSurveyGenerationCode(survey)}</td>
-                        <td className="p-3 whitespace-nowrap">{getSurveyCampaignLabel(survey)}</td>
+                        <td className="p-3">
+                          {survey.survey_type === 'ojt' ? (
+                            <div className="flex flex-wrap gap-x-2 gap-y-1">
+                              {getOjtTrainingSessions(survey).map((session) => (
+                                <button key={session.id} type="button" onClick={() => onOpenOjtTraining(session.id)} className="text-indigo-700 font-semibold hover:underline">
+                                  {session.generation_code || session.nombre_generacion}
+                                </button>
+                              ))}
+                            </div>
+                          ) : getSurveyCampaignLabel(survey)}
+                        </td>
                         <td className="p-3 whitespace-nowrap">{getTrainerDisplayName(survey.formador_id, survey.formador_nombre)}</td>
                         <td className="p-3">
                           <div className="flex items-center gap-1.5 max-w-[420px]">

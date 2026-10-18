@@ -2759,6 +2759,7 @@ export default function App() {
                   onUpdateSurveyAssignments={handleUpdateSurveyAssignments}
                   onAuditLog={addAuditLog}
                   onOpenPublicSurvey={handleOpenPublicSurvey}
+                  onOpenOjtTraining={(sessionId) => handleViewAttendance(sessionId, 'ojt')}
                 />
               )}
 
