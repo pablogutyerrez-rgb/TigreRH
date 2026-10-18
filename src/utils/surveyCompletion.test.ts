@@ -8,9 +8,11 @@ import type { AttendanceRecord, OjtModule, Participant, TrainingSession, Trainin
 
 const participant = { id: 'p1', training_session_id: 's1', dni: '130365', nombres: 'Test', apellidos: 'Survey', evaluacion_nota: 16 } as Participant;
 const session = { id: 's1', ojt_module_id: 'm1', estado: 'Capacitación cerrada', campaña: 'Culqi', generation_code: 'CAP-CU-01', formador_ojt_ids: ['ojt-1'], formador_ojt_nombres: ['Formador OJT'] } as TrainingSession;
+const legacyGponSession = { id: 's-gpon', ojt_module_id: 'm1', estado: 'Capacitación cerrada', campaña: 'GPON', generation_code: 'CAP-GP-01' } as TrainingSession;
+const legacyGponParticipant = { id: 'p-gpon', training_session_id: 's-gpon', dni: '87654321', nombres: 'Legacy', apellidos: 'Gpon', evaluacion_nota: 16 } as Participant;
 const module = { id: 'm1', generation_ids: ['s1'], participant_ids: ['p1', 'p2'] } as OjtModule;
 const initial = { id: 'initial', training_session_id: 's1', token: 'INITIAL', estado: 'Habilitada' } as TrainingSurvey;
-const ojt = { id: 'ojt', training_session_id: '', ojt_module_id: 'm1', survey_type: 'ojt', token: 'OJT', estado: 'Habilitada' } as TrainingSurvey;
+const ojt = { id: 'ojt', training_session_id: '', ojt_module_id: 'm1', survey_type: 'ojt', token: 'OJT', estado: 'Habilitada', grupo_ojt: 'OJT Culqi' } as TrainingSurvey;
 const operations = { id: 'ops', training_session_id: '', survey_type: 'operaciones', token: 'OPS', estado: 'Habilitada', supervisor_nombres: ['Supervisor'] } as TrainingSurvey;
 const attendance = [{ id: 'a1', participant_id: 'p1', training_session_id: 's1', dia: 5, estado_asistencia: 'Desistió' }] as AttendanceRecord[];
 const ratings = { q1: 4, q2: 4, q3: 4, q4: 4, q5: 4, q6: 4, q7: 4, q8: 4 };
@@ -112,6 +114,18 @@ test('public survey routes: availability, duplicates and anonymous operations', 
       { session: 's1', module: 'm1', campaign: 'Culqi', generation: 'CAP-CU-01', trainer: 'Formador OJT' });
     store.responses.set('historical', { training_survey_id: 'initial', dni: 130365 });
     assert.equal((await invoke('/:token/responses', 'INITIAL', answers)).status, 409);
+  });
+  await t.test('OJT links ignore legacy campaigns that do not have OJT', async () => {
+    reset('Capacitación cerrada');
+    store.sessions.set('s-gpon', { ...legacyGponSession });
+    store.participants.set('p-gpon', { ...legacyGponParticipant });
+    store.ojt_modules.get('m1')!.participant_ids = ['p1', 'p-gpon'];
+
+    const metadata = await invoke('/:token/metadata', 'OJT');
+    assert.equal(metadata.status, 200);
+    assert.equal(metadata.body.survey.campaña, 'Culqi');
+    assert.equal(metadata.body.survey.codigo_generacion, 'OJT Culqi');
+    assert.equal((await invoke('/:token', 'OJT', {}, '87654321')).status, 404);
   });
   await t.test('operations stays anonymous and permits separate submissions without participant blocking', async () => {
     reset('Capacitación cerrada');

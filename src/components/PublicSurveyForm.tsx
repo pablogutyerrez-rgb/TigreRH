@@ -433,7 +433,7 @@ export default function PublicSurveyForm({
     );
   };
 
-  if (surveyToken && remoteSurvey && (remoteSurvey.survey_type === 'ojt' || remoteSurvey.survey_type === 'operaciones')) {
+  if (surveyToken && remoteSurvey && remoteSurvey.survey_type === 'operaciones') {
     return (
       <PublicSurveyV4Form
         surveyToken={surveyToken}

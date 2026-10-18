@@ -3,6 +3,7 @@ import { Router, type Response } from 'express';
 import { z } from 'zod';
 import { dataDb as adminDb } from '../hybridDb.js';
 import { isEligibleForOjt } from '../services/surveyAutomationService.js';
+import { hasCampaignOjt } from '../services/trainingSchedule.js';
 
 const router = Router();
 const tokenSchema = z.string().trim().min(1).max(160);
@@ -34,8 +35,11 @@ const getOjtContext = async (survey: Record<string, unknown>) => {
   const module = { id: moduleDoc.id, ...moduleDoc.data() } as Record<string, unknown>;
   const generationIds = new Set((Array.isArray(module.generation_ids) ? module.generation_ids : []).map(String));
   const sessionDocs = await adminDb.collection('sessions').get();
-  const sessions = sessionDocs.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Record<string, unknown>)).filter((session) => String(session.ojt_module_id || '') === moduleId || generationIds.has(String(session.id)));
-  return { module, sessions };
+  const sessions = sessionDocs.docs
+    .map((doc) => ({ id: doc.id, ...doc.data() } as Record<string, unknown>))
+    .filter((session) => (String(session.ojt_module_id || '') === moduleId || generationIds.has(String(session.id))) &&
+      hasCampaignOjt(readString(session, ['campaña', 'campana', 'campa�a'])));
+  return sessions.length > 0 ? { module, sessions } : null;
 };
 
 const getPublicSurvey = async (surveyDoc: Awaited<ReturnType<typeof findSurvey>>) => {
@@ -45,12 +49,20 @@ const getPublicSurvey = async (surveyDoc: Awaited<ReturnType<typeof findSurvey>>
   const sessionDoc = survey.training_session_id ? await adminDb.collection('sessions').doc(String(survey.training_session_id)).get() : null;
   const session = sessionDoc?.exists ? ({ id: sessionDoc.id, ...sessionDoc.data() } as Record<string, unknown>) : null;
   const ojt = type === 'ojt' ? await getOjtContext(survey) : null;
+  if (type === 'ojt' && !ojt) return null;
   const ojtSession = ojt?.sessions[0];
+  const ojtCampaigns = type === 'ojt'
+    ? Array.from(new Set(ojt!.sessions.map((item) => readString(item, ['campaña', 'campana', 'campa�a'])).filter(Boolean)))
+    : [];
   return {
     id: survey.id, survey_type: type, training_session_id: String(survey.training_session_id || ''), ojt_module_id: String(survey.ojt_module_id || ''), estado: survey.estado, token: String(survey.token || ''),
-    campaña: readString(survey, ['campaña', 'campana', 'campa�a']) || readString(session || ojtSession, ['campaña', 'campana', 'campa�a']),
+    campaña: type === 'ojt'
+      ? ojtCampaigns.join(', ')
+      : readString(survey, ['campaña', 'campana', 'campa�a']) || readString(session || ojtSession, ['campaña', 'campana', 'campa�a']),
     subcampaña: readString(survey, ['subcampaña', 'subcampana']),
-    codigo_generacion: readString(session, ['generation_code', 'nombre_generacion']) || readString(survey, ['codigo_generacion']) || String(ojt?.module.nombre || ''),
+    codigo_generacion: type === 'ojt'
+      ? String(survey.grupo_ojt || ojt!.module.nombre || '')
+      : readString(session, ['generation_code', 'nombre_generacion']) || readString(survey, ['codigo_generacion']) || String(ojt?.module.nombre || ''),
     grupo_ojt: String(survey.grupo_ojt || ojt?.module.nombre || ''),
     formador_id: type === 'ojt' ? String((ojt?.module.formador_ojt_ids as string[] | undefined)?.[0] || '') : readString(session, ['formador_id']) || readString(survey, ['formador_id']),
     formador_nombre: type === 'ojt' ? String((ojt?.module.formador_ojt_nombres as string[] | undefined)?.join(', ') || survey.formador_nombre || '') : readString(session, ['formador_nombre']) || readString(survey, ['formador_nombre']),
