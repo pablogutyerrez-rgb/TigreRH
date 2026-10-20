@@ -61,6 +61,10 @@ test('document correction and affected routes use existing records atomically', 
     const rows = store[name] ||= new Map();
     const doc = (id = `generated-${++sequence}`): any => ({ id, name,
       get: async () => ({ id, ref: doc(id), exists: rows.has(id), data: () => rows.get(id) || {} }),
+      create: async (data: Data) => {
+        if (rows.has(id)) throw Object.assign(new Error('Duplicate'), { code: 6 });
+        rows.set(id, { ...data });
+      },
       set: async (data: Data, options?: { merge?: boolean }) => { rows.set(id, { ...(options?.merge ? rows.get(id) : {}), ...data }); },
     });
     const query = (filters: Array<[string, unknown]> = []): any => ({
@@ -132,7 +136,7 @@ test('document correction and affected routes use existing records atomically', 
       const handler = router.stack.find((layer: any) => layer.route?.path === path && layer.route.methods[method]).route.stack.at(-1).handle;
       let code = 200; let payload: any;
       const res = { status: (value: number) => { code = value; return res; }, json: (value: any) => { payload = value; return res; } };
-      await handler({ body, params: { id: 'p', sessionId: 's' }, user: { ...actor, uid: userId, rol: role, module_view_only: viewOnly } }, res);
+      await handler({ body, params: { id: body.id || 'p', sessionId: 's' }, user: { ...actor, uid: userId, rol: role, module_view_only: viewOnly } }, res);
       return { code, payload };
     };
     await t.test('authorized document edits and read-only or unassigned restrictions', async () => {
@@ -271,6 +275,49 @@ test('document correction and affected routes use existing records atomically', 
       prepare();
       assert.equal((await invoke(trainingRoutes, '/:sessionId', 'patch', { estado: 'Capacitación cerrada' }, 'Formador', 'ojt')).code, 403);
       t.mock.timers.reset();
+    });
+    await t.test('correcting initial attendance adds a newly eligible participant to the assigned OJT group', async () => {
+      reset();
+      Object.assign(store.sessions.get('s')!, {
+        campaña: 'Culqi',
+        fecha_inicio: '2026-10-12',
+        training_model: 'split_ojt',
+        ojt_module_id: 'm',
+      });
+      store.ojt_modules.set('m', {
+        id: 'm',
+        nombre: 'OJT Culqi',
+        generation_ids: ['s'],
+        participant_ids: [],
+        formador_ojt_ids: ['ojt'],
+        formador_ojt_nombres: ['OJT'],
+      });
+      store.participants.get('p')!.evaluacion_nota = 16;
+      store.participants.get('p')!.resultado_formacion = 'Apto';
+      store.attendance = new Map([1, 2, 3, 4, 5].map((dia) => [`initial-${dia}`, {
+        id: `initial-${dia}`,
+        participant_id: 'p',
+        training_session_id: 's',
+        dia,
+        estado_asistencia: dia === 5 ? 'Faltó' : 'Asistió',
+      }]));
+
+      const correction = {
+        id: 'initial-5',
+        participant_id: 'p',
+        training_session_id: 's',
+        dia: 5,
+        estado_asistencia: 'Asistió',
+      };
+      assert.equal((await invoke(operationRoutes, '/attendance/:id', 'put', correction, 'Administrador')).code, 200);
+      assert.deepEqual(store.ojt_modules.get('m')!.participant_ids, ['p']);
+      const ojtRecords = [...store.attendance.values()].filter((record) => record.participant_id === 'p' && record.dia >= 6);
+      assert.deepEqual(ojtRecords.map((record) => record.dia).sort((left, right) => left - right), [6, 7, 8, 9, 10]);
+      assert.ok(ojtRecords.every((record) => record.estado_asistencia === 'Seleccionar'));
+
+      assert.equal((await invoke(operationRoutes, '/attendance/:id', 'put', correction, 'Administrador')).code, 200);
+      assert.deepEqual(store.ojt_modules.get('m')!.participant_ids, ['p']);
+      assert.equal([...store.attendance.values()].filter((record) => record.participant_id === 'p' && record.dia >= 6).length, 5);
     });
   } finally { await deleteApp(app); }
 });

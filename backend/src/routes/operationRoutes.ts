@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { adminStorage } from '../firebaseAdmin.js';
 import { dataDb as adminDb, DELETE_FIELD } from '../hybridDb.js';
 import { updateParticipantDocument } from '../services/participantDocumentService.js';
-import { isInitialOnlyCampaign } from '../services/trainingSchedule.js';
+import { hasCampaignOjt, isInitialOnlyCampaign } from '../services/trainingSchedule.js';
 import { isAttendanceMinutesOpen, peruAttendanceMinutes, isOperationalOjtClosed } from '../services/attendancePolicy.js';
 import { ensureOjtSurvey, ensureOperationsSurvey, isEligibleForOjt } from '../services/surveyAutomationService.js';
 import {
@@ -136,9 +136,61 @@ const syncOjtSurveyForEligibleParticipant = async (
   session: Record<string, unknown> | undefined,
   userId: string,
 ) => {
-  if (!session?.ojt_module_id || !isEligibleForOjt(participant)) return;
-  const module = await adminDb.collection('ojt_modules').doc(String(session.ojt_module_id)).get();
-  if (module.exists) await ensureOjtSurvey(session, { id: module.id, ...module.data() }, userId);
+  if (!session?.ojt_module_id || !hasCampaignOjt(session.campaña) || !isEligibleForOjt(participant)) return;
+
+  const participantId = String(participant.id || '');
+  const sessionId = String(session.id || participant.training_session_id || '');
+  if (!participantId || !sessionId || String(participant.estado_final || '') === 'Desistió') return;
+
+  const attendanceSnapshot = await adminDb.collection('attendance').where('participant_id', '==', participantId).get();
+  const initialAttendance = attendanceSnapshot.docs
+    .map((document) => document.data())
+    .filter((record) => String(record.training_session_id || '') === sessionId && Number(record.dia) >= 1 && Number(record.dia) <= 5);
+  const completedInitialAttendance = [1, 2, 3, 4, 5].every((day) =>
+    initialAttendance.some((record) =>
+      Number(record.dia) === day &&
+      ['Asistió', 'Tardanza', 'Faltó', 'Descanso médico', 'Feriado'].includes(String(record.estado_asistencia || ''))));
+  if (!completedInitialAttendance) return;
+
+  const moduleRef = adminDb.collection('ojt_modules').doc(String(session.ojt_module_id));
+  const module = await moduleRef.get();
+  if (!module.exists) return;
+  const moduleData = { id: module.id, ...module.data() } as Record<string, unknown>;
+  const participantIds = new Set((Array.isArray(moduleData.participant_ids) ? moduleData.participant_ids : []).map(String));
+  if (!participantIds.has(participantId)) {
+    await moduleRef.set({
+      participant_ids: [...participantIds, participantId],
+      updated_at: new Date().toISOString(),
+    }, { merge: true });
+  }
+
+  const timestamp = new Date().toISOString();
+  const writer = adminDb.bulkWriter();
+  for (let day = 6; day <= 10; day += 1) {
+    writer.set(adminDb.collection('attendance').doc(`ojt-${participantId}-${day}`), {
+      id: `ojt-${participantId}-${day}`,
+      participant_id: participantId,
+      training_session_id: sessionId,
+      dia: day,
+      fecha: getBusinessDay(session.fecha_inicio, day),
+      estado_asistencia: 'Seleccionar',
+      registrado_por: userId,
+      fecha_registro: timestamp,
+    }, { merge: true });
+  }
+  await writer.close();
+  await ensureOjtSurvey(session, moduleData, userId);
+};
+
+const getBusinessDay = (start: unknown, day: number) => {
+  const date = new Date(`${String(start || '')}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return '';
+  while ([0, 6].includes(date.getDay())) date.setDate(date.getDate() + 1);
+  for (let count = 1; count < day;) {
+    date.setDate(date.getDate() + 1);
+    if (date.getDay() !== 0 && date.getDay() !== 6) count += 1;
+  }
+  return date.toISOString().slice(0, 10);
 };
 
 const canAccessParticipant = async (req: AuthenticatedRequest, participantId: string) => {
@@ -227,6 +279,23 @@ router.put(
       writer.set(adminDb.collection('attendance').doc(String(record.id)), record, { merge: true });
     });
     await writer.close();
+    const correctedParticipants = new Map<string, string>();
+    parsed.data.records.forEach((record) => {
+      if (Number(record.dia) <= 5 && record.participant_id) {
+        correctedParticipants.set(String(record.participant_id), String(record.training_session_id));
+      }
+    });
+    for (const [participantId, sessionId] of correctedParticipants) {
+      const participant = await adminDb.collection('participants').doc(participantId).get();
+      const session = sessions.get(sessionId);
+      if (participant.exists && session) {
+        await syncOjtSurveyForEligibleParticipant(
+          { id: participant.id, ...participant.data() },
+          { id: sessionId, ...session },
+          req.user!.uid,
+        );
+      }
+    }
     res.json({ ok: true, saved: parsed.data.records.length });
   },
 );
@@ -264,6 +333,16 @@ router.put(
 
     if (!isDropoutCorrection) {
       await attendanceRef.set(parsed.data, { merge: true });
+      if (Number(parsed.data.dia) <= 5) {
+        const participant = await adminDb.collection('participants').doc(String(parsed.data.participant_id || '')).get();
+        if (participant.exists) {
+          await syncOjtSurveyForEligibleParticipant(
+            { id: participant.id, ...participant.data() },
+            { id: parsed.data.training_session_id, ...session.data() },
+            req.user!.uid,
+          );
+        }
+      }
       res.json({ ok: true });
       return;
     }
@@ -341,6 +420,13 @@ router.put(
       }, { merge: true });
     }
     await writer.close();
+    if (correctedDay <= 5 && participantSnapshot) {
+      await syncOjtSurveyForEligibleParticipant(
+        { id: participantSnapshot.id, ...participantSnapshot.data(), ...(shouldReactivateParticipant ? { estado_final: 'En formación' } : {}) },
+        { id: parsed.data.training_session_id, ...session.data() },
+        req.user!.uid,
+      );
+    }
     res.json({ ok: true });
   },
 );
