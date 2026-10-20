@@ -505,7 +505,16 @@ export default function AttendanceControl({
   // Filter participants
   const filteredParts = useMemo(() => {
     return participants.filter(p => {
-      if (p.training_session_id !== session.id || (phase === 'ojt' && session.training_model === 'split_ojt' && !attendance.some((record) => record.participant_id === p.id && record.dia >= 6 && record.dia <= 10))) return false;
+      if (p.training_session_id !== session.id) return false;
+      if (phase === 'ojt') {
+        const hasOjtAttendance = attendance.some((record) =>
+          record.participant_id === p.id && record.dia >= 6 && record.dia <= 10);
+        const hasInitialDropout = attendance.some((record) =>
+          record.participant_id === p.id && record.dia >= 1 && record.dia <= 5 &&
+          isDropoutStatus(record.estado_asistencia));
+        if (!hasOjtAttendance || Number(p.evaluacion_nota) < 16 ||
+          isDropoutStatus(p.estado_final) || hasInitialDropout) return false;
+      }
 
       const normalizedSearch = searchTerm.trim().toLowerCase();
       const matchesSearch = !normalizedSearch ||

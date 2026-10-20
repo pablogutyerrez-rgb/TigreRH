@@ -90,12 +90,18 @@ test('Culqi assignment enables legacy and split attendance transactionally witho
     });
     await t.test('new split Culqi enables D6-D10 after completing D1-D5', async () => {
       reset(true);
+      participants.push({ id: 'dropped', training_session_id: 's', evaluacion_nota: 18, estado_final: 'Desistió' });
+      attendance.push(...[1, 2, 3, 4].map((dia) => ({ id: `dropped-${dia}`, participant_id: 'dropped', training_session_id: 's', dia, estado_asistencia: 'Asistió' })));
+      attendance.push({ id: 'dropped-5', participant_id: 'dropped', training_session_id: 's', dia: 5, estado_asistencia: 'Baja' });
       attendance[4].estado_asistencia = 'Pendiente';
       assert.equal((await invoke()).status, 409);
       assert.equal(module, undefined);
       attendance[4].estado_asistencia = 'Feriado';
-      assert.equal((await invoke()).status, 200);
-      assert.equal(attendance.length, 10);
+      const result = await invoke();
+      assert.equal(result.status, 200);
+      assert.equal(attendance.filter((record) => record.participant_id === 'p').length, 10);
+      assert.equal(attendance.filter((record) => record.participant_id === 'dropped' && record.dia >= 6).length, 0);
+      assert.deepEqual(module!.participant_ids, ['p']);
       assert.equal(session.training_model, 'split_ojt');
     });
     await t.test('permissions, missing trainer, closed training and excluded campaigns remain blocked', async () => {

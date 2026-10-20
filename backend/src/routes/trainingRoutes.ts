@@ -57,6 +57,13 @@ const businessDay = (start: string, day: number) => {
   return date.toISOString().slice(0, 10);
 };
 
+const isInitialPhaseDropout = (status: unknown) =>
+  ['desistio', 'baja'].includes(String(status || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim());
+
 router.post('/:sessionId/assign-ojt', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   await ensureHybridSchema();
   const client = await getPostgresPool().connect();
@@ -99,7 +106,12 @@ router.post('/:sessionId/assign-ojt', requireAuth, async (req: AuthenticatedRequ
       throw Object.assign(new Error('Completa las asistencias de los dias 1 al 5 para todos los participantes.'), { status: 409 });
     }
     const eligibleIds = participants.rows
-      .filter((row: { payload: Record<string, unknown> }) => isEligibleForOjt(row.payload))
+      .filter((row: { document_id: string; payload: Record<string, unknown> }) => isEligibleForOjt(row.payload) &&
+        !initialAttendance.rows.some((attendance: { payload: Record<string, unknown> }) =>
+          attendance.payload.participant_id === row.document_id &&
+          Number(attendance.payload.dia) >= 1 &&
+          Number(attendance.payload.dia) <= 5 &&
+          isInitialPhaseDropout(attendance.payload.estado_asistencia)))
       .map((row: { document_id: string }) => row.document_id);
     if (eligibleIds.length === 0) throw Object.assign(new Error('No hay participantes con nota final mayor o igual a 16 habilitados para OJT.'), { status: 409 });
 
