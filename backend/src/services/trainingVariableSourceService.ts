@@ -1,6 +1,7 @@
 import { calculatePhaseMetrics } from './trainingPhaseMetrics.js';
 import { isToolsDropout } from './attendancePolicy.js';
 import { dataDb as adminDb } from '../hybridDb.js';
+import { getScheduledTrainingDays } from './trainingSchedule.js';
 
 type StoredRecord = Record<string, unknown> & { id: string };
 
@@ -191,17 +192,19 @@ export const calculateTrainingVariableFromData = async (
     new Set(selectedParticipants.filter((p) => p.training_session_id === session.id).map((p) => p.id)),
     selectedAttendance.filter((a) => a.training_session_id === session.id).map((a) => ({
       participant_id: normalizeText(a.participant_id), dia: Number(a.dia), estado_asistencia: normalizeText(a.estado_asistencia),
-    })), [],
+    })), [], new Map(selectedParticipants
+      .filter((participant) => participant.training_session_id === session.id)
+      .map((participant) => [participant.id, getScheduledTrainingDays(session.campana || session['campaña'])])),
   ));
   const dayOneCount = phases.reduce((sum, phase) => sum + phase.d1Ids.size, 0);
-  const finalDayCount = phases.reduce((sum, phase) => sum + phase.d10Ids.size, 0);
+  const finalDayCount = phases.reduce((sum, phase) => sum + phase.finalDayIds.size, 0);
   const initialTraining = phases.reduce((sum, phase) => sum + phase.d1Ids.size, 0);
   const finalTraining = phases.reduce((sum, phase) => sum + phase.d5Ids.size, 0);
   const initialOjt = phases.reduce((sum, phase) => sum + phase.d6Ids.size, 0);
   const finalOjt = phases.reduce((sum, phase) => sum + phase.d10Ids.size, 0);
   const retentionTraining = initialTraining > 0 ? finalTraining / initialTraining * 100 : 0;
   const retentionOjt = initialOjt > 0 ? finalOjt / initialOjt * 100 : 0;
-  const retention = (retentionTraining + retentionOjt) / 2;
+  const retention = initialOjt > 0 ? (retentionTraining + retentionOjt) / 2 : retentionTraining;
   const altasOperacion = new Set(phases.flatMap((phase) => [...phase.altasD10Ids]));
   const sessionCampaigns = new Map(validSessions.map((session) => [session.id, productivityCampaign(session.campana || session['campaña'])]));
   const participantById = new Map(selectedParticipants.map((participant) => [participant.id, participant]));

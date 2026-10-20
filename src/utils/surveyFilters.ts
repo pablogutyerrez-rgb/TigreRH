@@ -26,7 +26,7 @@ export const filterSurveys = (surveys: TrainingSurvey[], sessions: TrainingSessi
     const generations = survey.survey_type === 'ojt' && survey.grupo_generaciones?.length
       ? survey.grupo_generaciones : [session?.generation_code || session?.nombre_generacion || survey.codigo_generacion];
     const trainers = survey.survey_type === 'operaciones'
-      ? []
+      ? survey.supervisor_nombres || []
       : survey.survey_type === 'ojt'
         ? [survey.formador_id]
         : session ? getSessionTrainerIds(session) : [survey.formador_id];
@@ -35,7 +35,7 @@ export const filterSurveys = (surveys: TrainingSurvey[], sessions: TrainingSessi
     return survey.estado !== 'Eliminada' &&
       (!filters.campaign || campaigns.some((campaign) => normalize(campaign) === normalize(filters.campaign))) &&
       (!filters.generation || generations.some((generation) => normalize(generation) === normalize(filters.generation))) &&
-      (!filters.trainer || trainers.includes(filters.trainer)) &&
+      (!filters.trainer || trainers.some((trainer) => normalize(trainer) === normalize(filters.trainer))) &&
       (!filters.type || normalize(session?.tipo_capacitacion || survey.training_type) === normalize(filters.type)) &&
       overlapsDateRange(start, end, filters.from, filters.to);
   });

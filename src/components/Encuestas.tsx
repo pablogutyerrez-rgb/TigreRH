@@ -63,6 +63,28 @@ const OPERATIONS_SUPERVISORS: Record<string, string[]> = {
   'Entel Empresas / RUC 10': ['Janeth Coronado'],
 };
 
+const normalizeSurveyValue = (value?: string) =>
+  (value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+
+const getSurveyContextKey = (survey: TrainingSurvey) => {
+  const type = survey.survey_type || 'inicial';
+  if (type === 'ojt') return `ojt:${survey.ojt_module_id || survey.grupo_ojt || survey.codigo_generacion}`;
+  if (type === 'operaciones') return `operaciones:${survey.training_session_id || `${normalizeSurveyValue(survey.campaña)}:${normalizeSurveyValue(survey.codigo_generacion)}:${normalizeSurveyValue(survey.subcampaña)}`}`;
+  return `inicial:${survey.training_session_id || survey.codigo_generacion}`;
+};
+
+const surveyStatusPriority = (status: SurveyStatus) =>
+  ({ Habilitada: 4, Cerrada: 3, Borrador: 2, Deshabilitada: 1, Eliminada: 0 })[status];
+
+const uniqueSurveyValues = (values: string[]) => {
+  const unique = new Map<string, string>();
+  values.forEach((value) => {
+    const normalized = normalizeSurveyValue(value);
+    if (normalized && !unique.has(normalized)) unique.set(normalized, value.trim());
+  });
+  return [...unique.values()].sort((a, b) => a.localeCompare(b, 'es'));
+};
+
 interface EncuestasProps {
   surveys: TrainingSurvey[];
   responses: SurveyResponse[];
@@ -199,8 +221,7 @@ export default function Encuestas({
     return sessions.filter((session) => module?.generation_ids.includes(session.id) && hasCampaignOjt(session.campaña));
   };
 
-  const normalizeFilterValue = (value?: string) =>
-    (value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+  const normalizeFilterValue = normalizeSurveyValue;
 
   const getSurveyEligibleParticipants = (survey: TrainingSurvey) =>
     getSurveyParticipants(survey, participants, attendance, sessions, ojtModules);
@@ -291,13 +312,32 @@ export default function Encuestas({
   }, [surveys, visibleSessionIds, ojtModules, currentUser.id, isAdmin, isAnalyst, isStaff, isRecruiter]);
 
   const sectionSurveys = useMemo(() => visibleSurveys.filter((survey) => (survey.survey_type || 'inicial') === surveySection), [visibleSurveys, surveySection]);
-  const filteredSurveys = useMemo(() => filterSurveys(sectionSurveys, sessions, {
+  const rawFilteredSurveys = useMemo(() => filterSurveys(sectionSurveys, sessions, {
     campaign: filterCampaign, generation: filterGenerator, trainer: filterTrainer,
     type: '', from: dateStart, to: dateEnd,
   }).filter((survey) =>
     (!filterSubcampaign || normalizeFilterValue(survey.subcampaña) === normalizeFilterValue(filterSubcampaign)) &&
-    (survey.survey_type !== 'operaciones' || !filterTrainer || (survey.supervisor_nombres || []).includes(filterTrainer))
+    (survey.survey_type !== 'operaciones' || !filterTrainer || (survey.supervisor_nombres || [])
+      .some((name) => normalizeFilterValue(name) === normalizeFilterValue(filterTrainer)))
   ), [sectionSurveys, sessions, filterCampaign, filterGenerator, filterTrainer, filterSubcampaign, dateStart, dateEnd]);
+
+  const filteredSurveyGroups = useMemo(() => {
+    const groups = new Map<string, { survey: TrainingSurvey; surveyIds: string[] }>();
+    rawFilteredSurveys.forEach((survey) => {
+      const key = getSurveyContextKey(survey);
+      const current = groups.get(key);
+      if (!current) {
+        groups.set(key, { survey, surveyIds: [survey.id] });
+        return;
+      }
+      current.surveyIds.push(survey.id);
+      if (surveyStatusPriority(survey.estado) > surveyStatusPriority(current.survey.estado)) current.survey = survey;
+    });
+    return [...groups.values()];
+  }, [rawFilteredSurveys]);
+
+  const filteredSurveys = useMemo(() => filteredSurveyGroups.map((group) => group.survey), [filteredSurveyGroups]);
+  const filteredSurveyIds = useMemo(() => new Set(filteredSurveyGroups.flatMap((group) => group.surveyIds)), [filteredSurveyGroups]);
 
   const assignedLinkSurveys = useMemo(() => filteredSurveys.filter((survey) => {
     if (survey.estado !== 'Habilitada') return false;
@@ -333,12 +373,12 @@ export default function Encuestas({
 
   // General filtered responses from non-deleted surveys
   const filteredResponses = useMemo(() => {
-    const surveyIds = new Set(filteredSurveys.map((survey) => survey.id));
     return normalizedResponses.filter(r => {
-      return surveyIds.has(r.training_survey_id) &&
-        (surveySection !== 'operaciones' || !filterTrainer || r.supervisor_nombre === filterTrainer);
+      return filteredSurveyIds.has(r.training_survey_id) &&
+        (surveySection !== 'operaciones' || !filterTrainer ||
+          normalizeFilterValue(r.supervisor_nombre) === normalizeFilterValue(filterTrainer));
     });
-  }, [normalizedResponses, filteredSurveys, surveySection, filterTrainer]);
+  }, [normalizedResponses, filteredSurveyIds, surveySection, filterTrainer]);
 
   // VALID RESPONSES ONLY (Habilitada or Cerrada surveys) FOR DASHBOARD CALCULATIONS
   const dashboardResponses = useMemo(() => {
@@ -595,7 +635,7 @@ export default function Encuestas({
 
   // --- LISTS FOR INPUT DROPDOWNS ---
   const campaignsList = useMemo(() => {
-    return Array.from(new Set(sectionSurveys.flatMap(getSurveyCampaigns))).sort();
+    return uniqueSurveyValues(sectionSurveys.flatMap(getSurveyCampaigns));
   }, [sectionSurveys, sessions]);
 
   const trainersList = useMemo(() => {
@@ -620,15 +660,15 @@ export default function Encuestas({
   }, [sectionSurveys, sessions, users]);
 
   const generationsList = useMemo(() => {
-    return Array.from(new Set(sectionSurveys.map(s => getSurveyGenerationCode(s))));
+    return uniqueSurveyValues(sectionSurveys.map(getSurveyGenerationCode));
   }, [sectionSurveys, sessions]);
 
-  const subcampaignsList = useMemo(() => Array.from(new Set(
+  const subcampaignsList = useMemo(() => uniqueSurveyValues(
     sectionSurveys
       .filter((survey) => !filterCampaign || normalizeFilterValue(survey.campaña) === normalizeFilterValue(filterCampaign))
       .map((survey) => survey.subcampaña)
       .filter(Boolean) as string[],
-  )).sort(), [sectionSurveys, filterCampaign]);
+  ), [sectionSurveys, filterCampaign]);
 
   // Sessions that do not have an active satisfaction survey yet (to avoid duplicates)
   const sessionsWithoutSurvey = useMemo(() => {

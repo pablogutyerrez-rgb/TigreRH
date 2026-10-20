@@ -58,6 +58,15 @@ test('un grupo OJT responde por cada campaña y generación que contiene', () =>
   assert.deepEqual(filterSurveys([group], [], { ...empty, generation: 'CAP-R10' }).map((item) => item.id), ['ojt']);
 });
 
+test('los filtros de Operaciones combinan campaña, supervisor y fechas', () => {
+  const operations = [
+    { id: 'ops-a', survey_type: 'operaciones', campaña: 'Culqi', codigo_generacion: 'CAP-CU-01', supervisor_nombres: ['Ana'], estado: 'Habilitada', start_date: '2026-10-01', end_date: '2026-10-31' },
+    { id: 'ops-b', survey_type: 'operaciones', campaña: 'Culqi', codigo_generacion: 'CAP-CU-02', supervisor_nombres: ['Bruno'], estado: 'Habilitada', start_date: '2026-10-01', end_date: '2026-10-31' },
+  ] as TrainingSurvey[];
+  assert.deepEqual(filterSurveys(operations, [], { ...empty, campaign: 'culqi', trainer: ' ana ', from: '2026-10-10', to: '2026-10-10' }).map((survey) => survey.id), ['ops-a']);
+  assert.deepEqual(filterSurveys(operations, [], { ...empty, trainer: 'Ana', from: '2026-11-01' }).map((survey) => survey.id), []);
+});
+
 test('Excel de una hoja preserva postulantes y diez dias sin otros registros', () => {
   const people = [
     { id: 'pa', training_session_id: 'a', nombres: 'Ana', apellidos: 'Perez', dni: '00123456', observacion: 'x'.repeat(33000) },

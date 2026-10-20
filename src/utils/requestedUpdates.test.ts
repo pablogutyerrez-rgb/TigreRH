@@ -113,6 +113,20 @@ test('feriado conserva la retención y Altas exige Asistió en D10', () => {
   assert.equal(metrics.retencionOjt, 100);
   assert.deepEqual([...metrics.altasD10Ids], ['b']);
 });
+test('GPON y Equifax cierran métricas en D5, sin deserción artificial por D10', () => {
+  const finalDays = new Map<string, 5 | 10>([['gpon', 5], ['equifax', 5]]);
+  const metrics = calculatePhaseMetrics(new Set(['gpon', 'equifax']), [
+    { participant_id: 'gpon', dia: 1, estado_asistencia: 'Asistió' },
+    { participant_id: 'gpon', dia: 2, estado_asistencia: 'Asistió' },
+    { participant_id: 'gpon', dia: 5, estado_asistencia: 'Asistió' },
+    { participant_id: 'equifax', dia: 1, estado_asistencia: 'Asistió' },
+    { participant_id: 'equifax', dia: 2, estado_asistencia: 'Asistió' },
+    { participant_id: 'equifax', dia: 5, estado_asistencia: 'Feriado' },
+  ], [], finalDays);
+  assert.equal(metrics.desercionesFinales, 0);
+  assert.equal(metrics.desercionFinalRate, 0);
+  assert.deepEqual([...metrics.finalDayIds].sort(), ['equifax', 'gpon']);
+});
 test('importa bajas desde BASE con fechas seriales y DNI numérico', () => {
   const rows = normalizeTerminations([{
     CIUDAD: 'Lima', POSICIÓN: 'Asesor', ALTA: 45292, DNI: 130365, 'NOMBRE Y APELLIDOS': 'Marcos Capusari',

@@ -44,6 +44,7 @@ import { BPO_CAMPAIGNS } from '../constants/campaigns';
 import MonthlyTrainingView from './MonthlyTrainingView';
 import { getSessionTrainerIds, isSessionAssignedTrainer } from '../utils/trainingAssignments';
 import CampaignMultiSelect from './CampaignMultiSelect';
+import { getScheduledTrainingDays } from '../../backend/src/services/trainingSchedule';
 
 interface DashboardProps {
   sessions: TrainingSession[];
@@ -185,6 +186,10 @@ export default function Dashboard({
   }, [participants, filteredSessionIds, excludeExcludentes, excludentParticipantIds]);
 
   const filteredParticipantIds = useMemo(() => new Set(filteredParticipants.map(p => p.id)), [filteredParticipants]);
+  const finalDayByParticipant = useMemo(() => {
+    const finalDayBySession = new Map(filteredSessions.map((session) => [session.id, getScheduledTrainingDays(session.campaña)]));
+    return new Map(filteredParticipants.map((participant) => [participant.id, finalDayBySession.get(participant.training_session_id) || 10] as const));
+  }, [filteredSessions, filteredParticipants]);
 
   // Filtered Attendance & Confirmations
   const filteredAttendance = useMemo(() => {
@@ -203,7 +208,7 @@ export default function Dashboard({
   // KPI Calculations
   const metrics = useMemo(() => {
     const totalCargados = filteredParticipants.length;
-    const phase = calculatePhaseMetrics(filteredParticipantIds, filteredAttendance, filteredConfirmations);
+    const phase = calculatePhaseMetrics(filteredParticipantIds, filteredAttendance, filteredConfirmations, finalDayByParticipant);
     const pendientesAlta = filteredParticipants.filter(p => p.estado_final === 'Pendiente de alta').length;
     const ojtParticipants = filteredParticipants.filter((participant) => phase.ojtParticipantIds.has(participant.id));
     const aptos = ojtParticipants.filter(p => p.resultado_formacion === 'Apto').length;
@@ -240,7 +245,7 @@ export default function Dashboard({
       reqAprobadas,
       reqRechazadas
     };
-  }, [filteredParticipants, filteredParticipantIds, filteredAttendance, filteredConfirmations, reopens]);
+  }, [filteredParticipants, filteredParticipantIds, filteredAttendance, filteredConfirmations, finalDayByParticipant, reopens]);
 
   // 1. Embudo (Funnel) Data
   const funnelData = useMemo(() => {
@@ -266,7 +271,7 @@ export default function Dashboard({
       const campParts = filteredParticipants.filter(p => campSessionIds.has(p.training_session_id));
       const campPartIds = new Set<string>(campParts.map(p => p.id));
 
-      const phase = calculatePhaseMetrics(campPartIds, filteredAttendance, filteredConfirmations);
+      const phase = calculatePhaseMetrics(campPartIds, filteredAttendance, filteredConfirmations, finalDayByParticipant);
 
       return {
         name: camp,
@@ -280,7 +285,7 @@ export default function Dashboard({
         'Deserción Final %': phase.desercionFinalRate,
       };
     });
-  }, [filteredSessions, filteredParticipants, filteredAttendance, filteredConfirmations, filterCampañas]);
+  }, [filteredSessions, filteredParticipants, filteredAttendance, filteredConfirmations, finalDayByParticipant, filterCampañas]);
 
   // 3. Comparativo por Formador
   const formadorData = useMemo(() => {
@@ -290,7 +295,7 @@ export default function Dashboard({
       const tParts = filteredParticipants.filter(p => sIds.has(p.training_session_id));
       const tPartIds = new Set<string>(tParts.map(p => p.id));
 
-      const phase = calculatePhaseMetrics(tPartIds, filteredAttendance, filteredConfirmations);
+      const phase = calculatePhaseMetrics(tPartIds, filteredAttendance, filteredConfirmations, finalDayByParticipant);
 
       return {
         name: t.nombre.split(' ')[0] + ' ' + (t.nombre.split(' ')[1] || ''), // Short name
@@ -301,7 +306,7 @@ export default function Dashboard({
         'Efectividad %': phase.retencionOjt,
       };
     });
-  }, [filteredSessions, visibleTrainers, filteredParticipants, filteredAttendance, filteredConfirmations]);
+  }, [filteredSessions, visibleTrainers, filteredParticipants, filteredAttendance, filteredConfirmations, finalDayByParticipant]);
 
   // 4. Deserciones por Motivo
   const desertionDetails = useMemo(() => {
@@ -361,7 +366,7 @@ export default function Dashboard({
     return Array.from(new Set(filteredSessions.map((session) => session.campaña))).sort().map((campaign) => {
       const sessionIds = new Set(filteredSessions.filter((session) => session.campaña === campaign).map((session) => session.id));
       const participantIds = new Set<string>(filteredParticipants.filter((participant) => sessionIds.has(participant.training_session_id)).map((participant) => participant.id));
-      const phase = calculatePhaseMetrics(participantIds, filteredAttendance, filteredConfirmations);
+      const phase = calculatePhaseMetrics(participantIds, filteredAttendance, filteredConfirmations, finalDayByParticipant);
       const bajasD5 = new Set(filteredAttendance.filter((record) =>
         participantIds.has(record.participant_id) && record.dia === 5 &&
         normalizeAttendanceStatus(record.estado_asistencia) === 'desistio' &&
@@ -369,7 +374,7 @@ export default function Dashboard({
       ).map((record) => record.participant_id));
       return { name: campaign, 'Asistentes D5': phase.d5Ids.size, 'Bajas D5 perfil': bajasD5.size };
     });
-  }, [filteredSessions, filteredParticipants, filteredAttendance, filteredConfirmations]);
+  }, [filteredSessions, filteredParticipants, filteredAttendance, filteredConfirmations, finalDayByParticipant]);
 
   const desercionesPorMotivoTotal = useMemo(
     () => desercionesPorMotivo.reduce((sum, item) => sum + item.value, 0),
@@ -424,7 +429,7 @@ export default function Dashboard({
       ).length;
       const sessionParts = filteredParticipants.filter((participant) => participant.training_session_id === session.id);
       const sessionPartIds = new Set<string>(sessionParts.map((participant) => participant.id));
-      const phase = calculatePhaseMetrics(sessionPartIds, filteredAttendance, filteredConfirmations);
+      const phase = calculatePhaseMetrics(sessionPartIds, filteredAttendance, filteredConfirmations, finalDayByParticipant);
       bucket['Cierre Capacitación'] += phase.d5Ids.size;
       bucket['Cierre OJT'] += phase.d10Ids.size;
       bucket.Altas += phase.altasD10Ids.size;
@@ -433,7 +438,7 @@ export default function Dashboard({
     return Array.from(weekBuckets.values())
       .sort((a, b) => a.sortKey - b.sortKey)
       .map(({ sortKey: _sortKey, ...bucket }) => bucket);
-  }, [filteredSessions, filteredParticipants, filteredAttendance, filteredConfirmations]);
+  }, [filteredSessions, filteredParticipants, filteredAttendance, filteredConfirmations, finalDayByParticipant]);
 
   return (
     <div className="space-y-6" id="dashboard-container">
