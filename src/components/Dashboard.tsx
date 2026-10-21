@@ -4,7 +4,7 @@
  */
 import { isToolsDropout } from '../../backend/src/services/attendancePolicy';
 
-import { calculatePhaseMetrics } from '../../backend/src/services/trainingPhaseMetrics';
+import { calculatePhaseMetrics, getSessionFinalTrainingDay } from '../../backend/src/services/trainingPhaseMetrics';
 import React, { useState, useMemo } from 'react';
 import {
   BarChart,
@@ -44,7 +44,6 @@ import { BPO_CAMPAIGNS } from '../constants/campaigns';
 import MonthlyTrainingView from './MonthlyTrainingView';
 import { getSessionTrainerIds, isSessionAssignedTrainer } from '../utils/trainingAssignments';
 import CampaignMultiSelect from './CampaignMultiSelect';
-import { getScheduledTrainingDays } from '../../backend/src/services/trainingSchedule';
 
 interface DashboardProps {
   sessions: TrainingSession[];
@@ -187,9 +186,14 @@ export default function Dashboard({
 
   const filteredParticipantIds = useMemo(() => new Set(filteredParticipants.map(p => p.id)), [filteredParticipants]);
   const finalDayByParticipant = useMemo(() => {
-    const finalDayBySession = new Map(filteredSessions.map((session) => [session.id, getScheduledTrainingDays(session.campaña)]));
+    const finalDayBySession = new Map(filteredSessions.map((session) => [session.id, getSessionFinalTrainingDay(session)]));
     return new Map(filteredParticipants.map((participant) => [participant.id, finalDayBySession.get(participant.training_session_id) || 10] as const));
   }, [filteredSessions, filteredParticipants]);
+  const finalDesertionLabel = useMemo(() => {
+    const days = new Set(filteredSessions.map(getSessionFinalTrainingDay));
+    if (days.size === 1) return `Día ${[...days][0]}`;
+    return 'cierre aplicable';
+  }, [filteredSessions]);
 
   // Filtered Attendance & Confirmations
   const filteredAttendance = useMemo(() => {
@@ -634,7 +638,7 @@ export default function Dashboard({
               <p className="text-slate-400 font-medium text-xs uppercase tracking-wider">Deserción Final</p>
               <h3 className="text-slate-900 text-3xl font-black mt-1">{metrics.desercionFinalRate}%</h3>
               <p className="text-xs text-rose-500 font-medium mt-1">
-                {metrics.desercionesFinales} de {metrics.asistieronDia2} no llegaron al Día 10
+                {metrics.desercionesFinales} de {metrics.asistieronDia2} no llegaron al {finalDesertionLabel}
               </p>
             </div>
             <div className="bg-rose-50 rounded-xl p-2.5 text-rose-600 border border-rose-100">

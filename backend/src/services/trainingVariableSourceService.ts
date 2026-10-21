@@ -1,7 +1,6 @@
-import { calculatePhaseMetrics } from './trainingPhaseMetrics.js';
+import { calculatePhaseMetrics, getSessionFinalTrainingDay } from './trainingPhaseMetrics.js';
 import { isToolsDropout } from './attendancePolicy.js';
 import { dataDb as adminDb } from '../hybridDb.js';
-import { getScheduledTrainingDays } from './trainingSchedule.js';
 
 type StoredRecord = Record<string, unknown> & { id: string };
 
@@ -194,7 +193,9 @@ export const calculateTrainingVariableFromData = async (
       participant_id: normalizeText(a.participant_id), dia: Number(a.dia), estado_asistencia: normalizeText(a.estado_asistencia),
     })), [], new Map(selectedParticipants
       .filter((participant) => participant.training_session_id === session.id)
-      .map((participant) => [participant.id, getScheduledTrainingDays(session.campana || session['campaña'])])),
+      .map((participant) => [participant.id, getSessionFinalTrainingDay(session as {
+        campaña?: unknown; campana?: unknown; training_days?: unknown;
+      })])),
   ));
   const dayOneCount = phases.reduce((sum, phase) => sum + phase.d1Ids.size, 0);
   const finalDayCount = phases.reduce((sum, phase) => sum + phase.finalDayIds.size, 0);

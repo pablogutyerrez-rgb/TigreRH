@@ -1,5 +1,17 @@
+import { getScheduledTrainingDays } from './trainingSchedule.js';
+
 const isPresentAttendance = (status?: string) => ['asistio', 'tardanza', 'feriado'].includes((status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim());
 const isAttendedAttendance = (status?: string) => (status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim() === 'asistio';
+
+export const getSessionFinalTrainingDay = (session: {
+  campaña?: unknown;
+  campana?: unknown;
+  training_days?: unknown;
+}): 5 | 10 => {
+  const campaign = String(session.campaña || session.campana || '').trim();
+  if (campaign) return getScheduledTrainingDays(campaign);
+  return Number(session.training_days) === 5 ? 5 : 10;
+};
 
 export const calculatePhaseMetrics = (
   participantIds: Set<string>,

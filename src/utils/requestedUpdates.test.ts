@@ -5,7 +5,7 @@ import { calculateTrainingVariablePreview as preview } from './trainingVariableC
 import { calculateTrainingVariableFromData } from '../../backend/src/services/trainingVariableSourceService';
 import { normalizeTerminations } from '../../backend/src/services/rotationService';
 import { inspectCommercialImport } from '../../backend/src/services/commercialService';
-import { calculatePhaseMetrics } from '../../backend/src/services/trainingPhaseMetrics';
+import { calculatePhaseMetrics, getSessionFinalTrainingDay } from '../../backend/src/services/trainingPhaseMetrics';
 import { prospectComparison, campaignKey, filterProspectRecords } from './prospectMetrics';
 import { buildTrainingWorkbook, TRAINING_EXPORT_HEADERS } from './trainingExport';
 import * as XLSX from 'xlsx';
@@ -126,6 +126,12 @@ test('GPON y Equifax cierran métricas en D5, sin deserción artificial por D10'
   assert.equal(metrics.desercionesFinales, 0);
   assert.equal(metrics.desercionFinalRate, 0);
   assert.deepEqual([...metrics.finalDayIds].sort(), ['equifax', 'gpon']);
+});
+test('el día final conserva compatibilidad con campañas históricas sin tilde', () => {
+  assert.equal(getSessionFinalTrainingDay({ campana: 'GPON', training_days: 10 }), 5);
+  assert.equal(getSessionFinalTrainingDay({ campana: 'Equifax', training_days: 10 }), 5);
+  assert.equal(getSessionFinalTrainingDay({ campana: 'Entel Empresas RUC 10', training_days: 5 }), 10);
+  assert.equal(getSessionFinalTrainingDay({ training_days: 5 }), 5);
 });
 test('importa bajas desde BASE con fechas seriales y DNI numérico', () => {
   const rows = normalizeTerminations([{
