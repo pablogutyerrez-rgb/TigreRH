@@ -234,7 +234,7 @@ export default function Dashboard({
       asistieronDia6: phase.d6Ids.size,
       asistieronDia10: phase.d10Ids.size,
       desercionesFinales: phase.desercionesFinales,
-      altasConfirmadas: phase.altasD10Ids.size,
+      altasConfirmadas: phase.altasFinalIds.size,
       ojtParticipantIds: phase.ojtParticipantIds,
       pendientesAlta,
       aptos,
@@ -262,7 +262,7 @@ export default function Dashboard({
       { name: 'Cierre Cap. (D5)', valor: metrics.asistieronDia5, fill: '#10b981' },
       { name: 'Inicio OJT (D6)', valor: metrics.asistieronDia6, fill: '#8b5cf6' },
       { name: 'Cierre OJT (D10)', valor: metrics.asistieronDia10, fill: '#a855f7' },
-      { name: 'Altas Conf.', valor: metrics.altasConfirmadas, fill: '#ec4899' },
+      { name: 'Altas', valor: metrics.altasConfirmadas, fill: '#ec4899' },
     ];
   }, [metrics]);
 
@@ -283,7 +283,7 @@ export default function Dashboard({
         'Asist. Día 1': phase.d1Ids.size,
         'Cierre Capacitación': phase.d5Ids.size,
         'Cierre OJT': phase.d10Ids.size,
-        Altas: phase.altasD10Ids.size,
+        Altas: phase.altasFinalIds.size,
         'Retención Capacitación %': phase.retencionCapacitacion,
         'Retención OJT %': phase.retencionOjt,
         'Deserción Final %': phase.desercionFinalRate,
@@ -306,7 +306,7 @@ export default function Dashboard({
         Asignados: tParts.length,
         'Cierre Capacitación': phase.d5Ids.size,
         'Cierre OJT': phase.d10Ids.size,
-        Altas: phase.altasD10Ids.size,
+        Altas: phase.altasFinalIds.size,
         'Efectividad %': phase.retencionOjt,
       };
     });
@@ -436,7 +436,7 @@ export default function Dashboard({
       const phase = calculatePhaseMetrics(sessionPartIds, filteredAttendance, filteredConfirmations, finalDayByParticipant);
       bucket['Cierre Capacitación'] += phase.d5Ids.size;
       bucket['Cierre OJT'] += phase.d10Ids.size;
-      bucket.Altas += phase.altasD10Ids.size;
+      bucket.Altas += phase.altasFinalIds.size;
     });
 
     return Array.from(weekBuckets.values())
@@ -654,7 +654,7 @@ export default function Dashboard({
             <div>
               <p className="text-slate-400 font-medium text-xs uppercase tracking-wider">Altas</p>
               <h3 className="text-slate-900 text-3xl font-black mt-1">{metrics.altasConfirmadas}</h3>
-              <p className="text-xs text-emerald-600 font-medium mt-1">Postulantes únicos con Asistió en Día 10</p>
+              <p className="text-xs text-emerald-600 font-medium mt-1">Postulantes únicos con Asistió en su día final</p>
             </div>
             <div className="bg-emerald-50 rounded-xl p-2.5 text-emerald-600 border border-emerald-100">
               <UserCheck className="w-5 h-5" />

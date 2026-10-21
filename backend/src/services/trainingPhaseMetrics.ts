@@ -24,12 +24,14 @@ export const calculatePhaseMetrics = (
   );
   const ojtParticipantIds = new Set<string>();
   const altasD10Ids = new Set<string>();
+  const altasFinalIds = new Set<string>();
   const finalDayIds = new Set<string>();
 
   attendanceRecords.forEach((record) => {
     if (!participantIds.has(record.participant_id)) return;
     const finalDay = finalDayByParticipant?.get(record.participant_id) || 10;
     if (record.dia === 10 && isAttendedAttendance(record.estado_asistencia)) altasD10Ids.add(record.participant_id);
+    if (record.dia === finalDay && isAttendedAttendance(record.estado_asistencia)) altasFinalIds.add(record.participant_id);
     if (!isPresentAttendance(record.estado_asistencia)) return;
     attendantsByDay.get(record.dia)?.add(record.participant_id);
     if (record.dia === finalDay) finalDayIds.add(record.participant_id);
@@ -60,6 +62,7 @@ export const calculatePhaseMetrics = (
     finalDayIds,
     ojtParticipantIds,
     altasD10Ids,
+    altasFinalIds,
     confirmedAltaIds,
     retencionCapacitacion: d1Ids.size > 0 ? Math.round((d5Ids.size / d1Ids.size) * 100) : 0,
     retencionOjt: d6Ids.size > 0 ? Math.round((d10Ids.size / d6Ids.size) * 100) : 0,

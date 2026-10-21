@@ -127,6 +127,18 @@ test('GPON y Equifax cierran métricas en D5, sin deserción artificial por D10'
   assert.equal(metrics.desercionFinalRate, 0);
   assert.deepEqual([...metrics.finalDayIds].sort(), ['equifax', 'gpon']);
 });
+test('Altas y deserción de una campaña de cinco días usan D5 con base D2', () => {
+  const participantIds = new Set(['1', '2', '3', '4', '5', '6']);
+  const records = [...participantIds].flatMap((participant_id) => [
+    { participant_id, dia: 2, estado_asistencia: 'Asistió' },
+    { participant_id, dia: 5, estado_asistencia: Number(participant_id) <= 3 ? 'Asistió' : 'Faltó' },
+  ]);
+  const metrics = calculatePhaseMetrics(participantIds, records, [], new Map([...participantIds].map((id) => [id, 5] as const)));
+  assert.equal(metrics.altasFinalIds.size, 3);
+  assert.equal(metrics.desercionesFinales, 3);
+  assert.equal(metrics.desercionFinalRate, 50);
+  assert.equal(metrics.altasD10Ids.size, 0);
+});
 test('el día final conserva compatibilidad con campañas históricas sin tilde', () => {
   assert.equal(getSessionFinalTrainingDay({ campana: 'GPON', training_days: 10 }), 5);
   assert.equal(getSessionFinalTrainingDay({ campana: 'Equifax', training_days: 10 }), 5);
