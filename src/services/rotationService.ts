@@ -9,7 +9,8 @@ export type RotationDashboard = {
   funnel: { altas: number; bajas: number; dotacion: number };
   by_campaign: Array<{ campana: string; altas: number; dotacion: number; bajas: number; porcentaje: number | null }>;
   motivos: Array<{ name: string; value: number }>; descripciones: Array<{ name: string; value: number }>; permanencia: Array<{ name: string; value: number }>;
-  fechas: Array<{ date: string; bajas: number }>;
+  fechas: Array<{ date: string; bajas: number; [motivo: string]: string | number }>;
+  motivo_keys: string[];
   otros: RotationDetail[];
   filter_options: { campaigns: string[]; months: string[] };
 };
@@ -32,4 +33,4 @@ export const getRotationDashboard = (filters: RotationFilters = {}, signal?: Abo
   if (filters.search) query.set('search', filters.search);
   return request<RotationDashboard>(`/api/formacion/rotacion${query.size ? `?${query}` : ''}`, { signal });
 };
-export const saveRotationRows = (rows: Record<string, unknown>[]) => request<{ received: number; inserted: number; updated: number; skipped: number }>('/api/formacion/rotacion/bajas', { method: 'POST', body: JSON.stringify({ rows }) });
+export const saveRotationRows = (rows: Record<string, unknown>[]) => request<{ received: number; inserted: number; updated: number; skipped: number; pending: number }>('/api/formacion/rotacion/bajas', { method: 'POST', body: JSON.stringify({ rows }) });

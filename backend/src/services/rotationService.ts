@@ -22,6 +22,13 @@ export const rotationDate = (value: unknown): string => {
   return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === candidate ? candidate : '';
 };
 const day = rotationDate;
+const datesIn = (value: unknown) => {
+  if (value instanceof Date || typeof value === 'number') return [rotationDate(value)].filter(Boolean);
+  const matches = normalize(value).match(/\d{1,4}[/-]\d{1,2}[/-]\d{1,4}/g) || [];
+  return matches.map(rotationDate).filter(Boolean);
+};
+const firstDate = (value: unknown) => datesIn(value)[0] || rotationDate(value);
+const lastDate = (value: unknown) => datesIn(value).at(-1) || rotationDate(value);
 const text = (row: Record<string, unknown>, names: string[]) => {
   return normalize(value(row, names));
 };
@@ -52,13 +59,13 @@ const classifyNotification = (motivo: string, descripcion: string, tipoSource: s
 };
 
 export const normalizeTerminations = (rows: Record<string, unknown>[]) => rows.map((raw, index) => {
-  const effectiveDate = value(raw, ['fechaefectiva', 'cese', 'fechabaja', 'fechacese', 'fechadecese', 'fechadebaja', 'fechareingreso', 'fechafin', 'fecha']);
-  const fecha = day(effectiveDate ?? value(raw, ['fechanotificacion', 'fechadenotificacion']));
-  const fecha_alta = day(value(raw, ['alta', 'fechaalta', 'fechadealta', 'fechaingreso', 'fechadeingreso', 'fechaingresolaboral']));
+  const effectiveDate = value(raw, ['fechaefectiva', 'cese', 'fechabaja', 'fechacese', 'fechadecese', 'fechadebaja', 'fechareingreso', 'fechafin', 'fechainicioyfin', 'periodo', 'fecha']);
+  const fecha = lastDate(effectiveDate ?? value(raw, ['fechanotificacion', 'fechadenotificacion']));
+  const fecha_alta = firstDate(value(raw, ['alta', 'fechaalta', 'fechadealta', 'fechaingreso', 'fechadeingreso', 'fechaingresolaboral', 'fechainicio', 'fechainicioyfin', 'periodo']));
   const dni = text(raw, ['dni', 'ce', 'dnice', 'documento', 'numerodocumento', 'numerodedocumento', 'numerodoc', 'nrodocumento', 'ndocumento']);
   const nombre = text(raw, ['nombre', 'nombres', 'nombreyapellidos', 'nombresyapellidos', 'apellidosynombres', 'colaborador', 'trabajador', 'nombrecompleto']);
-  const campana_origen = text(raw, ['campana', 'campaña', 'servicio']);
-  const proveedor = text(raw, ['proveedor', 'empresa', 'cliente']);
+  const campana_origen = text(raw, ['campana', 'campaña', 'servicio', 'empresa']);
+  const proveedor = text(raw, ['proveedor', 'proveedorservicio', 'cliente', 'empresa']);
   const motivo = text(raw, ['motivo', 'motivobaja', 'motivocese', 'motivodecese', 'motivodebaja', 'causal']);
   const descripcion = text(raw, ['descripcion', 'detalle', 'observacion', 'observaciones', 'comentario', 'descripciondelmotivo']);
   const sourceType = text(raw, ['tipo', 'tipobaja', 'tipocese', 'movimiento']);
@@ -121,7 +128,7 @@ export const saveRotationImport = async (rows: Record<string, unknown>[], actor:
       imported_by: actor.uid, imported_by_name: actor.nombre,
     });
   });
-  return { import_id: importId, received: normalized.length, inserted, updated, skipped };
+  return { import_id: importId, received: normalized.length, inserted, updated, skipped, pending: normalized.filter((row) => !row.verificado).length };
 };
 
 const fingerprint = (raw: Record<string, unknown>) => hash('revision', Object.keys(raw).sort().map((name) => [name, raw[name]]));
@@ -239,6 +246,13 @@ export const buildRotationDashboard = (data: { sessions: StoredRecord[]; partici
   const detail = rows.filter((item) => isVisible(item, filters));
   const other = detail.filter((item) => item.campana === OTHER_CAMPAIGN);
   const rate = (exits: number, population: number) => population ? Math.round(exits / population * 10000) / 100 : null;
+  const motiveKeys = [...new Set(visibleCeses.map((item) => item.motivo || 'Sin especificar'))].sort();
+  const monthly = new Map<string, Record<string, string | number>>();
+  visibleCeses.forEach((item) => {
+    const month = item.fecha.slice(0, 7); const row = monthly.get(month) || { date: month, bajas: 0 };
+    const motive = item.motivo || 'Sin especificar'; row.bajas = Number(row.bajas) + 1; row[motive] = Number(row[motive] || 0) + 1;
+    monthly.set(month, row);
+  });
   return {
     terminations: visibleCeses, detalle: detail, pendientes: detail.filter((item) => item.estado === 'Pendiente de validación'), fecha_corte: cutoff,
     altas_historicas: visibleHighs.length, total_bajas: visibleCeses.length, total_dotacion: activeHighs.length,
@@ -248,7 +262,7 @@ export const buildRotationDashboard = (data: { sessions: StoredRecord[]; partici
     by_campaign: [...byCampaign.values()].map((item) => ({ ...item, porcentaje: rate(item.bajas, item.altas) })).sort((a, b) => a.campana.localeCompare(b.campana)),
     motivos: count(visibleCeses.map((item) => ({ name: item.motivo }))), descripciones: count(visibleCeses.filter((item) => /despido/.test(key(item.motivo))).map((item) => ({ name: item.descripcion }))),
     permanencia: [7, 15, 30, 60, 90, 91].map((limit) => ({ name: bucket(limit), value: permanencia.filter((days) => bucket(days) === bucket(limit)).length })),
-    fechas: count(visibleCeses.map((item) => ({ name: item.fecha.slice(0, 7) }))).map((item) => ({ date: item.name, bajas: item.value })).sort((a, b) => a.date.localeCompare(b.date)),
+    fechas: [...monthly.values()].sort((a, b) => String(a.date).localeCompare(String(b.date))), motivo_keys: motiveKeys,
     otros: other,
     filter_options: { campaigns: [...new Set([...highs.map((high) => high.campana), ...rows.map((item) => item.campana)])].sort(), months: [...new Set([today.slice(0, 7), ...highs.map((high) => high.fecha_alta.slice(0, 7)), ...rows.map((item) => item.fecha.slice(0, 7))])].filter((month) => /^\d{4}-(0[1-9]|1[0-2])$/.test(month)).sort() },
   };

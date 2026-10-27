@@ -2,7 +2,9 @@ import * as XLSX from 'xlsx';
 
 const key = (value: unknown) => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const documents = new Set(['dni', 'ce', 'dnice', 'documento', 'numerodocumento', 'numerodedocumento', 'numerodoc', 'nrodocumento', 'ndocumento']);
-const dates = new Set(['fecha', 'cese', 'fechabaja', 'fechacese', 'fechadecese', 'fechadebaja', 'fechanotificacion', 'fechafin', 'fechareingreso', 'fechaefectiva']);
+const dates = new Set(['fecha', 'cese', 'fechabaja', 'fechacese', 'fechadecese', 'fechadebaja', 'fechanotificacion', 'fechafin', 'fechainicio', 'fechainicioyfin', 'periodo', 'fechareingreso', 'fechaefectiva']);
+const dateRange = (value: unknown) => String(value ?? '').match(/\d{1,4}[/-]\d{1,2}[/-]\d{1,4}/g) || [];
+const isDateHeader = (value: unknown) => dates.has(key(value)) || (key(value).includes('fecha') && /(inicio|fin|periodo)/.test(key(value)));
 
 export function parseRotationWorkbook(content: ArrayBuffer) {
   const workbook = XLSX.read(content, { type: 'array', cellDates: true });
@@ -11,7 +13,7 @@ export function parseRotationWorkbook(content: ArrayBuffer) {
   for (const name of candidates) {
     const sheet = workbook.Sheets[name];
     const grid = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', blankrows: true });
-    const headerRow = grid.findIndex((row) => row.some((cell) => documents.has(key(cell))) && row.some((cell) => dates.has(key(cell))));
+    const headerRow = grid.findIndex((row) => row.some((cell) => documents.has(key(cell))) && row.some(isDateHeader));
     if (headerRow < 0) continue;
     const headers = grid[headerRow].map((cell) => String(cell).trim());
     const nonempty = headers.filter(Boolean).map(key);
@@ -26,6 +28,14 @@ export function parseRotationWorkbook(content: ArrayBuffer) {
         row[header] = value instanceof Date
           ? `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
           : documents.has(key(header)) && cell ? XLSX.utils.format_cell(cell).trim() : value;
+      });
+      headers.forEach((header) => {
+        if (!isDateHeader(header)) return;
+        const range = dateRange(row[header]);
+        if (range.length > 1) {
+          row['Fecha inicio'] ||= range[0];
+          row['Fecha fin'] ||= range.at(-1)!;
+        }
       });
       return [row];
     });

@@ -32,3 +32,21 @@ test('rejects missing and duplicate headers rather than dropping data', () => {
     assert.throws(() => parseRotationWorkbook(XLSX.write(workbook, { type: 'array', bookType: 'xlsx' })));
   }
 });
+
+test('recognizes provider, company and date ranges stored in one notification cell', () => {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+    ['CE', 'Nombres y apellidos', 'Fechas de inicio y fin', 'Empresa', 'Proveedor', 'Motivo', 'Descripción'],
+    ['00130365', 'Ana Prueba', '01/10/2026 al 15/10/2026', 'Culqi', 'Operaciones', 'Renuncia', '15'],
+  ]), 'Notificaciones');
+  const [row] = parseRotationWorkbook(XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }));
+  assert.equal(row['Fecha inicio'], '01/10/2026');
+  assert.equal(row['Fecha fin'], '15/10/2026');
+  const [normalized] = normalizeTerminations([row]);
+  assert.equal(normalized.dni, '00130365');
+  assert.equal(normalized.fecha_alta, '2026-10-01');
+  assert.equal(normalized.fecha, '2026-10-15');
+  assert.equal(normalized.campana_origen, 'Culqi');
+  assert.equal(normalized.proveedor, 'Operaciones');
+  assert.match(normalized.validacion || '', /numérico/);
+});

@@ -151,10 +151,12 @@ test('imports are atomic, idempotent and keep every revision; legacy records sta
   });
   const actor = { uid: 'admin', nombre: 'Admin' };
   const row = { DNI: '00130365', CESE: '20/01/2026', MOTIVO: 'Renuncia', DESCRIPCION: 'Voluntaria' };
-  assert.equal((await saveRotationImport([row, row], actor)).inserted, 1);
+  const firstImport = await saveRotationImport([row, row], actor);
+  assert.equal(firstImport.inserted, 1); assert.equal(firstImport.pending, 0);
   assert.equal((await saveRotationImport([row], actor)).skipped, 1);
+  assert.equal((await saveRotationImport([{ ...row, DESCRIPCION: '15' }], actor)).pending, 1);
   for (let index = 0; index < 12; index++) assert.equal((await saveRotationImport([{ ...row, DESCRIPCION: `Version ${index}` }], actor)).updated, 1);
-  assert.equal([...store.keys()].filter((path) => path.startsWith('rotation_notification_versions/')).length, 13);
+  assert.equal([...store.keys()].filter((path) => path.startsWith('rotation_notification_versions/')).length, 14);
   const originalRevision = structuredClone([...store].find(([path, value]) => path.startsWith('rotation_notification_versions/') && value.descripcion === 'Voluntaria'));
   await saveRotationImport([row], actor);
   assert.deepEqual([...store].find(([path]) => path === originalRevision![0]), originalRevision);
