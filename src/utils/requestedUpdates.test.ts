@@ -155,7 +155,9 @@ test('importa bajas desde BASE con fechas seriales y DNI numérico', () => {
   assert.equal(rows[0].fecha_alta, '2024-01-01');
   assert.equal(rows[0].dni, '130365');
   assert.equal(rows[0].nombre, 'Marcos Capusari');
-  assert.throws(() => normalizeTerminations([{ DNI: '1', CESE: 45292 }]), /Fila 2: falta CAMPAÑA/);
+  const [unverified] = normalizeTerminations([{ DNI: '1', CESE: 45292 }]);
+  assert.equal(unverified.verificado, false);
+  assert.equal(unverified.campana, '');
 });
 test('inspeccion comercial reconstruye Culqi y conserva pendientes reales', () => {
   const result = inspectCommercialImport({ campaign: 'Culqi', file: { name: 'culqi.xlsx', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content_base64: 'AA==', sha256: 'a'.repeat(64) }, sheets: [{ name: 'BASE', headers: ['Terminal', 'Comercio', 'Fecha venta', 'GPV', 'Transacciones', 'Supervisor'], formulas: ['SUM(D:D)'], row_count: 2, rows: [{ Terminal: 'T-1', Comercio: 'C-1', 'Fecha venta': '2026-09-20', GPV: 1200, Transacciones: 4, Supervisor: 'Ana' }, { Terminal: 'T-2', Comercio: 'C-1', 'Fecha venta': '2026-09-20', GPV: 0, Transacciones: 0, Supervisor: 'Ana' }] }] });

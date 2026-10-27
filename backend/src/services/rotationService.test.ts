@@ -1,0 +1,171 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { buildRotationDashboard, normalizeTerminations, rotationDate, saveRotationImport, getRotationDashboard, type RotationTermination } from './rotationService.js';
+import { dataDb } from '../hybridDb.js';
+
+const notification = (dni: string, fecha: string, motivo = 'Renuncia'): RotationTermination => ({
+  id: `${dni}-${fecha}`, fecha, fecha_alta: '', campana: '', campana_origen: '', dni, nombre: '', proveedor: 'Proveedor', motivo,
+  descripcion: 'Notificación validada', tipo: 'cese', verificado: true, raw: {}, imported_at: '', imported_by: '',
+});
+const result = buildRotationDashboard({
+  sessions: [
+    { id: 'ruc', campana: 'Entel Empresas RUC 10', fecha_fin: '2026-01-15' },
+    { id: 'gpon', campana: 'GPON', fecha_fin: '2026-01-08' },
+    { id: 'gpon-no-apto', campana: 'GPON', fecha_fin: '2026-01-08' },
+    { id: 'reingreso', campana: 'Culqi', fecha_fin: '2026-02-15' },
+  ],
+  participants: [
+    { id: 'p-ruc', training_session_id: 'ruc', dni: '70000001', nombres: 'Ana' },
+    { id: 'p-gpon', training_session_id: 'gpon', dni: '70000002', nombres: 'Bruno', resultado_formacion: 'Apto' },
+    { id: 'p-no', training_session_id: 'gpon-no-apto', dni: '70000003', resultado_formacion: 'No apto' },
+    { id: 'p-reingreso', training_session_id: 'reingreso', dni: '70000001', nombres: 'Ana' },
+  ],
+  attendance: [
+    { id: 'a1', participant_id: 'p-ruc', training_session_id: 'ruc', dia: 10, estado_asistencia: 'Asistió', fecha: '2026-01-15' },
+    { id: 'a2', participant_id: 'p-gpon', training_session_id: 'gpon', dia: 5, estado_asistencia: 'Asistió', fecha: '2026-01-08' },
+    { id: 'a3', participant_id: 'p-no', training_session_id: 'gpon-no-apto', dia: 5, estado_asistencia: 'Asistió', fecha: '2026-01-08' },
+    { id: 'a4', participant_id: 'p-reingreso', training_session_id: 'reingreso', dia: 10, estado_asistencia: 'Asistió', fecha: '2026-02-15' },
+  ],
+  terminations: [notification('70000001', '2026-01-20'), notification('99999999', '2026-01-20')],
+});
+assert.equal(result.altas_historicas, 3);
+assert.equal(result.total_bajas, 1);
+assert.equal(result.total_dotacion, 2);
+assert.equal(result.otros.length, 1);
+assert.equal(result.by_campaign.find((item) => item.campana === 'GPON')?.altas, 1);
+const [first] = normalizeTerminations([{ DNI: '70000001', 'Fecha de cese': '20/01/2026', Motivo: 'Renuncia' }]);
+const [same] = normalizeTerminations([{ DNI: '70000001', 'Fecha de cese': '2026-01-20', Motivo: 'Renuncia' }]);
+assert.equal(first.id, same.id);
+console.log('rotation service tests passed');
+
+const base = () => ({
+  sessions: [{ id: 's', campana: 'Culqi' }],
+  participants: [{ id: 'p', training_session_id: 's', dni: '00130365', nombres: 'Ana' }],
+  attendance: [{ id: 'a', participant_id: 'p', training_session_id: 's', dia: 10, estado_asistencia: 'Asistió', fecha: '2026-01-10' }],
+  terminations: [] as RotationTermination[],
+});
+const imported = (rows: Record<string, unknown>[]): RotationTermination[] => normalizeTerminations(rows).map((row) => ({ ...row, imported_at: '', imported_by: '' }));
+
+test('dates, normalization and stable notification identity', () => {
+  assert.equal(rotationDate(45292.8), '2024-01-01');
+  assert.equal(rotationDate(new Date('2026-10-20T00:00:00Z')), '2026-10-20');
+  for (const date of ['31/02/2026', '2026-13-01', 'invalid', '', -1, Infinity]) assert.equal(rotationDate(date), '');
+  assert.throws(() => normalizeTerminations([{ DNI: '1', CESE: '31/02/2026' }]), /válida/);
+  const [a] = normalizeTerminations([{ 'DNI/CE': '00130365', CESE: '20/01/2026', MOTIVO: 'Renuncia', DESCRIPCION: 'Voluntaria' }]);
+  const [b] = normalizeTerminations([{ 'DNI/CE': '00130365', CESE: '2026-01-20', MOTIVO: 'Despido', DESCRIPCION: 'Actualización del detalle' }]);
+  assert.equal(a.id, b.id);
+  assert.equal(a.dni, '00130365');
+  assert.equal(a.verificado, true);
+  assert.equal(normalizeTerminations([{ DNI: '1', Fecha: '01/01/2026', CESE: '20/01/2026' }])[0].fecha, '2026-01-20');
+});
+
+test('all five campaigns, missing dates, conflicting attendance, and session isolation', () => {
+  for (const campaign of ['Entel Empresas RUC 10', 'Entel Empresas RUC 20', 'Culqi', 'GPON', 'Equifax']) {
+    const data = base(); data.sessions[0].campana = campaign;
+    const five = ['GPON', 'Equifax'].includes(campaign);
+    data.attendance[0].dia = five ? 5 : 10;
+    Object.assign(data.participants[0], { resultado_formacion: 'Apto' });
+    assert.equal(buildRotationDashboard(data).total_dotacion, 1, campaign);
+    if (five) {
+      Object.assign(data.participants[0], { resultado_formacion: 'No apto' });
+      assert.equal(buildRotationDashboard(data).total_dotacion, 0);
+    }
+  }
+  const data = base(); data.attendance[0].training_session_id = 'other';
+  assert.equal(buildRotationDashboard(data).total_dotacion, 0);
+  data.attendance[0].training_session_id = 's'; data.attendance[0].fecha = '';
+  assert.equal(buildRotationDashboard(data).total_dotacion, 0);
+  data.attendance[0].fecha = '2026-01-10'; data.attendance.push({ ...data.attendance[0], id: 'conflict', estado_asistencia: 'Faltó' });
+  assert.equal(buildRotationDashboard(data).total_dotacion, 0);
+});
+
+test('unverified, numeric codes, administrative events and unmatched documents never deduct staff', () => {
+  for (const fields of [{ DESCRIPCION: '12345', MOTIVO: 'Despido' }, { MOTIVO: 'Por verificar' }, { MOTIVO: 'Renuncia', ESTADO: 'Pendiente' }, { MOTIVO: 'Cambio de proveedor' }, { DNI: 'unknown', MOTIVO: 'Renuncia' }]) {
+    const data = base(); data.terminations = imported([{ DNI: '00130365', CESE: '20/01/2026', ...fields }]);
+    const dashboard = buildRotationDashboard(data);
+    assert.equal(dashboard.total_bajas, 0); assert.equal(dashboard.total_dotacion, 1);
+    assert.equal(dashboard.detalle.length, 1);
+    if ('DESCRIPCION' in fields) assert.match(dashboard.pendientes[0].razon, /numérico/);
+  }
+});
+
+test('coherent period stock, combined filters, zero staff and as-of dates', () => {
+  const data = base(); data.terminations = imported([{ DNI: '00130365', CESE: '10/02/2026', MOTIVO: 'Renuncia' }]);
+  const before = buildRotationDashboard(data, { months: ['2026-01'] });
+  assert.equal(before.total_dotacion, 1); assert.equal(before.total_bajas, 0);
+  const after = buildRotationDashboard(data, { months: ['2026-02'], campaigns: ['Culqi'], search: 'ana', from: '2026-02-01', to: '2026-02-28' });
+  assert.equal(after.total_dotacion, 0); assert.equal(after.total_bajas, 1); assert.equal(after.altas_historicas, 1); assert.equal(after.porcentaje_rotacion, 100);
+  assert.equal(after.funnel.altas, after.funnel.bajas + after.funnel.dotacion);
+  assert.equal(after.permanencia_promedio, 31);
+  data.participants[0].nombres = 'Ángela';
+  assert.equal(buildRotationDashboard(data, { search: 'angela' }).total_bajas, 1);
+  assert.equal(buildRotationDashboard(data, { search: 'unrelated' }).total_bajas, 0);
+  assert.equal(buildRotationDashboard(data, { campaigns: ['GPON'] }).total_dotacion, 0);
+  assert.equal(buildRotationDashboard(data, { months: ['2025-02'] }).total_dotacion, 0);
+  assert.equal(buildRotationDashboard(data, { from: '2026-03-01' }).altas_historicas, 0);
+  assert.equal(buildRotationDashboard(base(), { from: '2027-01-01' }, '2026-10-27').total_dotacion, 0);
+});
+
+test('reentries and repeated trainings count one active document; repeated ceses count once', () => {
+  const data = base();
+  data.participants.push({ ...data.participants[0], id: 'p2' });
+  data.attendance.push({ ...data.attendance[0], id: 'a2', participant_id: 'p2', fecha: '2026-01-15' });
+  assert.equal(buildRotationDashboard(data).altas_historicas, 1);
+  data.terminations = imported([
+    { DNI: '00130365', CESE: '20/01/2026', MOTIVO: 'Renuncia' },
+    { DNI: '00130365', CESE: '22/01/2026', MOTIVO: 'Renuncia' },
+    { DNI: '00130365', Fecha: '01/02/2026', Tipo: 'Reingreso' },
+  ]);
+  const dashboard = buildRotationDashboard(data);
+  assert.equal(dashboard.total_bajas, 1); assert.equal(dashboard.total_dotacion, 1); assert.equal(dashboard.funnel.altas, 2);
+  assert.equal(dashboard.pendientes.length, 1);
+  assert.equal(dashboard.detalle.at(-1)?.estado, 'Reingreso');
+});
+
+test('campaign ambiguity and old employment dates require validation', () => {
+  const data = base(); data.sessions.push({ id: 'other', campana: 'Entel Empresas RUC 10' });
+  data.participants.push({ ...data.participants[0], id: 'p2', training_session_id: 'other' });
+  data.attendance.push({ ...data.attendance[0], id: 'a2', participant_id: 'p2', training_session_id: 'other', fecha: '2026-01-15' });
+  data.terminations = imported([{ DNI: '00130365', CESE: '20/01/2026', MOTIVO: 'Renuncia' }]);
+  assert.equal(buildRotationDashboard(data).total_bajas, 0);
+  assert.equal(buildRotationDashboard(data).otros.length, 1);
+  const single = base(); single.terminations = imported([{ DNI: '00130365', ALTA: '01/01/2026', CESE: '20/01/2026', MOTIVO: 'Renuncia' }]);
+  assert.equal(buildRotationDashboard(single).total_bajas, 0);
+});
+
+test('imports are atomic, idempotent and keep every revision; legacy records stay visible', async (t) => {
+  type Data = Record<string, any>;
+  const store = new Map<string, Data>();
+  const collection = (name: string): any => ({
+    doc: (id: string) => ({ id, name }),
+    get: async () => ({ docs: [...store].filter(([path]) => path.startsWith(`${name}/`)).map(([path, entry]) => ({ id: path.slice(name.length + 1), data: () => entry })) }),
+  });
+  t.mock.method(dataDb, 'collection', collection);
+  t.mock.method(dataDb, 'runTransaction', async (callback: any) => {
+    const pending = new Map<string, Data>();
+    await callback({
+      get: async (ref: any) => ({ exists: store.has(`${ref.name}/${ref.id}`), data: () => store.get(`${ref.name}/${ref.id}`) }),
+      set: (ref: any, row: Data) => { pending.set(`${ref.name}/${ref.id}`, structuredClone(row)); },
+    });
+    for (const [path, row] of pending) store.set(path, row);
+  });
+  const actor = { uid: 'admin', nombre: 'Admin' };
+  const row = { DNI: '00130365', CESE: '20/01/2026', MOTIVO: 'Renuncia', DESCRIPCION: 'Voluntaria' };
+  assert.equal((await saveRotationImport([row, row], actor)).inserted, 1);
+  assert.equal((await saveRotationImport([row], actor)).skipped, 1);
+  for (let index = 0; index < 12; index++) assert.equal((await saveRotationImport([{ ...row, DESCRIPCION: `Version ${index}` }], actor)).updated, 1);
+  assert.equal([...store.keys()].filter((path) => path.startsWith('rotation_notification_versions/')).length, 13);
+  const originalRevision = structuredClone([...store].find(([path, value]) => path.startsWith('rotation_notification_versions/') && value.descripcion === 'Voluntaria'));
+  await saveRotationImport([row], actor);
+  assert.deepEqual([...store].find(([path]) => path === originalRevision![0]), originalRevision);
+  const snapshot = structuredClone([...store]);
+  await assert.rejects(saveRotationImport([row, { ...row, MOTIVO: 'Despido' }], actor), /versiones distintas/);
+  assert.deepEqual([...store], snapshot);
+  const data = base();
+  for (const name of ['sessions', 'participants', 'attendance'] as const) for (const entry of data[name]) store.set(`${name}/${entry.id}`, entry);
+  store.set('rotation_terminations/old', { ...row, id: 'old', raw: row, dni: row.DNI, fecha: '2026-01-20', motivo: row.MOTIVO, nombre: 'Ana' });
+  const legacy = structuredClone(store.get('rotation_terminations/old'));
+  assert.equal((await getRotationDashboard()).total_bajas, 1);
+  assert.deepEqual(store.get('rotation_terminations/old'), legacy);
+  assert.ok([...store.keys()].every((path) => path.startsWith('rotation_') || /^(sessions|participants|attendance)\//.test(path)));
+});
