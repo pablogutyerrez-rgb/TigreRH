@@ -50,7 +50,7 @@ export default function Rotacion({ currentUser }: RotacionProps) {
     setSaving(true); setError(''); setMessage('');
     try {
       const result = await saveRotationRows(pending); setPending([]);
-      setMessage(`Importación procesada: ${result.received}; nuevas: ${result.inserted}; actualizadas: ${result.updated}; sin cambios: ${result.skipped}; pendientes: ${result.pending}.`);
+      setMessage(`Importación procesada: ${result.received}; nuevas: ${result.inserted}; actualizadas: ${result.updated}; sin cambios: ${result.skipped}; ceses confirmados: ${result.confirmed}; pendientes: ${result.pending}.`);
       if (input.current) input.current.value = ''; setRefresh((value) => value + 1);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudo guardar la importación.'); }
     finally { setSaving(false); }

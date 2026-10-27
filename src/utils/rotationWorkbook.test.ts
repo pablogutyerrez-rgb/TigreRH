@@ -36,7 +36,7 @@ test('rejects missing and duplicate headers rather than dropping data', () => {
 test('recognizes provider, company and date ranges stored in one notification cell', () => {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
-    ['CE', 'Nombres y apellidos', 'Fechas de inicio y fin', 'Empresa', 'Proveedor', 'Motivo', 'Descripción'],
+    ['DNI', 'NOMBRE Y APELLIDO', 'FECHA INICIO - FIN', 'EMPRESA', 'PROVEEDOR SOCIO', 'MOTIVO NOTIFICACIÓN', 'DESCRIPCIÓN'],
     ['00130365', 'Ana Prueba', '01/10/2026 al 15/10/2026', 'Culqi', 'Operaciones', 'Renuncia', '15'],
   ]), 'Notificaciones');
   const [row] = parseRotationWorkbook(XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }));
@@ -48,5 +48,11 @@ test('recognizes provider, company and date ranges stored in one notification ce
   assert.equal(normalized.fecha, '2026-10-15');
   assert.equal(normalized.campana_origen, 'Culqi');
   assert.equal(normalized.proveedor, 'Operaciones');
-  assert.match(normalized.validacion || '', /numérico/);
+  assert.equal(normalized.validacion, '');
+});
+
+test('requires the Notificaciones sheet and ignores unrelated sheets', () => {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['DNI', 'Cese'], ['1', '20/10/2026']]), 'BASE');
+  assert.throws(() => parseRotationWorkbook(XLSX.write(workbook, { type: 'array', bookType: 'xlsx' })), /Notificaciones/);
 });

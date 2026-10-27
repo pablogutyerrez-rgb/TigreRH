@@ -8,13 +8,13 @@ const isDateHeader = (value: unknown) => dates.has(key(value)) || (key(value).in
 
 export function parseRotationWorkbook(content: ArrayBuffer) {
   const workbook = XLSX.read(content, { type: 'array', cellDates: true });
-  const named = workbook.SheetNames.filter((name) => /^(notificaciones|base)$/i.test(name.trim()));
-  const candidates = named.length ? named.sort((a) => a.trim().toLowerCase() === 'notificaciones' ? -1 : 1) : workbook.SheetNames;
-  for (const name of candidates) {
+  const name = workbook.SheetNames.find((sheetName) => sheetName.trim().toLowerCase() === 'notificaciones');
+  if (!name) throw new Error('El archivo debe contener una hoja llamada Notificaciones.');
+  {
     const sheet = workbook.Sheets[name];
     const grid = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', blankrows: true });
     const headerRow = grid.findIndex((row) => row.some((cell) => documents.has(key(cell))) && row.some(isDateHeader));
-    if (headerRow < 0) continue;
+    if (headerRow < 0) throw new Error('La hoja Notificaciones no contiene documento DNI/CE y fecha de inicio o fin.');
     const headers = grid[headerRow].map((cell) => String(cell).trim());
     const nonempty = headers.filter(Boolean).map(key);
     if (new Set(nonempty).size !== nonempty.length) throw new Error('Hay encabezados duplicados en la hoja de notificaciones.');
@@ -43,5 +43,5 @@ export function parseRotationWorkbook(content: ArrayBuffer) {
     if (rows.length > 20000) throw new Error('El máximo por carga es 20 000 notificaciones.');
     return rows;
   }
-  throw new Error('No se encontró una hoja con documento DNI/CE y fecha del movimiento.');
+  throw new Error('La hoja Notificaciones no contiene documento DNI/CE y fecha de inicio o fin.');
 }

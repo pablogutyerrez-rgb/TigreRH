@@ -63,10 +63,10 @@ export const normalizeTerminations = (rows: Record<string, unknown>[]) => rows.m
   const fecha = lastDate(effectiveDate ?? value(raw, ['fechanotificacion', 'fechadenotificacion']));
   const fecha_alta = firstDate(value(raw, ['alta', 'fechaalta', 'fechadealta', 'fechaingreso', 'fechadeingreso', 'fechaingresolaboral', 'fechainicio', 'fechainicioyfin', 'periodo']));
   const dni = text(raw, ['dni', 'ce', 'dnice', 'documento', 'numerodocumento', 'numerodedocumento', 'numerodoc', 'nrodocumento', 'ndocumento']);
-  const nombre = text(raw, ['nombre', 'nombres', 'nombreyapellidos', 'nombresyapellidos', 'apellidosynombres', 'colaborador', 'trabajador', 'nombrecompleto']);
+  const nombre = text(raw, ['nombre', 'nombres', 'nombreyapellido', 'nombreyapellidos', 'nombresyapellidos', 'apellidosynombres', 'colaborador', 'trabajador', 'nombrecompleto']);
   const campana_origen = text(raw, ['campana', 'campaña', 'servicio', 'empresa']);
-  const proveedor = text(raw, ['proveedor', 'proveedorservicio', 'cliente', 'empresa']);
-  const motivo = text(raw, ['motivo', 'motivobaja', 'motivocese', 'motivodecese', 'motivodebaja', 'causal']);
+  const proveedor = text(raw, ['proveedor', 'proveedorsocio', 'proveedorservicio', 'cliente', 'empresa']);
+  const motivo = text(raw, ['motivo', 'motivonotificacion', 'motivobaja', 'motivocese', 'motivodecese', 'motivodebaja', 'causal']);
   const descripcion = text(raw, ['descripcion', 'detalle', 'observacion', 'observaciones', 'comentario', 'descripciondelmotivo']);
   const sourceType = text(raw, ['tipo', 'tipobaja', 'tipocese', 'movimiento']);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || (!dni && !nombre)) {
@@ -76,15 +76,13 @@ export const normalizeTerminations = (rows: Record<string, unknown>[]) => rows.m
   const tipo = classifyNotification(motivo, descripcion, sourceType);
   const state = key(text(raw, ['estado', 'estadocese', 'estadoefectivo', 'confirmado', 'verificado']));
   const recognized = /^(renuncia|despido|ces(e|ado)|baja|terminodecontrato|findecontrato|vencimientodecontrato|abandonode(trabajo|puesto)|mutuodisenso|fallecimiento)/.test(key(motivo)) || /^(cese|baja|despido)$/.test(key(sourceType));
-  const validacion = !effectiveDate ? 'Falta fecha efectiva del movimiento' : /\b\d+\b/.test(descripcion) ? 'Descripción con código numérico: requiere validación' :
-    /pendiente|solicit|anulad|cancelad|rechazad|programad|activo/.test(state) ? 'Notificación no efectiva' :
+  const validacion = !effectiveDate ? 'Falta fecha efectiva del movimiento' : /pendiente|solicit|anulad|cancelad|rechazad|programad|activo/.test(state) ? 'Notificación no efectiva' :
     !dni ? 'Falta documento para conciliar' :
     fecha_alta && fecha_alta > fecha ? 'Ingreso posterior al movimiento' :
     tipo === 'cese' && !recognized ? 'Motivo de cese no verificado' : '';
   const verificado = !validacion;
   const identity = documentKey(dni) || key(nombre);
-  const sourceId = text(raw, ['idnotificacion', 'codigonotificacion', 'idmovimiento']);
-  return { id: hash('rotation-notification', sourceId ? ['source', sourceId] : [identity, fecha]), fecha, fecha_alta, campana: campana_origen, campana_origen, dni, nombre, proveedor, motivo, descripcion, tipo, verificado, validacion, raw };
+  return { id: hash('rotation-notification', [identity, fecha, key(motivo)]), fecha, fecha_alta, campana: campana_origen, campana_origen, dni, nombre, proveedor, motivo, descripcion, tipo, verificado, validacion, raw };
 });
 
 const read = async <T extends Row>(collection: string) => {
@@ -128,7 +126,14 @@ export const saveRotationImport = async (rows: Record<string, unknown>[], actor:
       imported_by: actor.uid, imported_by_name: actor.nombre,
     });
   });
-  return { import_id: importId, received: normalized.length, inserted, updated, skipped, pending: normalized.filter((row) => !row.verificado).length };
+  const dashboard = await getRotationDashboard();
+  const importedIds = new Set([...unique.keys()]);
+  const imported = dashboard.detalle.filter((row) => importedIds.has(row.id));
+  return {
+    import_id: importId, received: normalized.length, inserted, updated, skipped,
+    confirmed: imported.filter((row) => row.estado === 'Cese efectivo').length,
+    pending: imported.filter((row) => row.estado === 'Pendiente de validación').length,
+  };
 };
 
 const fingerprint = (raw: Record<string, unknown>) => hash('revision', Object.keys(raw).sort().map((name) => [name, raw[name]]));
@@ -214,7 +219,6 @@ const reconcile = (notifications: RotationTermination[], highs: RotationHigh[], 
       row.fecha_alta = source.fecha; row.estado = 'Reingreso'; row.razon = ''; continue;
     }
     if (!current) { row.razon = 'Cese ya conciliado; no hay un nuevo ingreso'; continue; }
-    if (source.fecha_alta && source.fecha_alta < current.fecha_alta) { row.razon = 'Fecha de ingreso de otro período: requiere validación'; continue; }
     row.estado = 'Cese efectivo'; row.razon = ''; row.permanencia_dias = elapsedDays(current.fecha_alta, source.fecha);
     current.exit = row; active.delete(document);
   }
@@ -275,12 +279,12 @@ export const getRotationDashboard = async (filters: RotationFilters = {}) => {
   for (const record of legacy) {
     try {
       const [row] = normalizeTerminations([{ ...(record.raw as Record<string, unknown> || {}), DNI: record.dni, Fecha: record.fecha, Alta: record.fecha_alta, Motivo: record.motivo, Tipo: record.tipo, Nombre: record.nombre }]);
-      combined.set(`${documentKey(row.dni) || key(row.nombre)}:${row.fecha}`, { ...row, id: record.id, imported_at: normalize(record.imported_at), imported_by: normalize(record.imported_by) });
+      combined.set(`${documentKey(row.dni) || key(row.nombre)}:${row.fecha}:${key(row.motivo)}`, { ...row, id: record.id, imported_at: normalize(record.imported_at), imported_by: normalize(record.imported_by) });
     } catch {
       combined.set(`legacy:${record.id}`, { id: record.id, fecha: day(record.fecha), fecha_alta: day(record.fecha_alta), campana: '', campana_origen: normalize(record.campana), dni: normalize(record.dni), nombre: normalize(record.nombre), proveedor: normalize(record.proveedor), motivo: normalize(record.motivo), descripcion: normalize(record.descripcion), tipo: 'cese', verificado: false, validacion: 'Registro histórico con fecha o identidad incompleta', raw: record.raw as Record<string, unknown> || record, imported_at: normalize(record.imported_at), imported_by: normalize(record.imported_by) });
     }
   }
-  for (const row of notifications.sort((a, b) => normalize(a.updated_at || a.imported_at).localeCompare(normalize(b.updated_at || b.imported_at)))) combined.set(`${documentKey(row.dni) || key(row.nombre)}:${row.fecha}`, row);
+  for (const row of notifications.sort((a, b) => normalize(a.updated_at || a.imported_at).localeCompare(normalize(b.updated_at || b.imported_at)))) combined.set(`${documentKey(row.dni) || key(row.nombre)}:${row.fecha}:${key(row.motivo)}`, row);
   return buildRotationDashboard({ sessions, participants, attendance, terminations: [...combined.values()] }, filters);
 };
 

@@ -33,4 +33,4 @@ export const getRotationDashboard = (filters: RotationFilters = {}, signal?: Abo
   if (filters.search) query.set('search', filters.search);
   return request<RotationDashboard>(`/api/formacion/rotacion${query.size ? `?${query}` : ''}`, { signal });
 };
-export const saveRotationRows = (rows: Record<string, unknown>[]) => request<{ received: number; inserted: number; updated: number; skipped: number; pending: number }>('/api/formacion/rotacion/bajas', { method: 'POST', body: JSON.stringify({ rows }) });
+export const saveRotationRows = (rows: Record<string, unknown>[]) => request<{ received: number; inserted: number; updated: number; skipped: number; confirmed: number; pending: number }>('/api/formacion/rotacion/bajas', { method: 'POST', body: JSON.stringify({ rows }) });
