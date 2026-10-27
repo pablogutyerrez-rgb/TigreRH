@@ -54,17 +54,19 @@ type RotationHigh = { id: string; documento: string; dni: string; nombre: string
 const classifyNotification = (motivo: string, descripcion: string, tipoSource: string): RotationTermination['tipo'] => {
   const descriptor = key(`${motivo} ${tipoSource}`);
   if (/reingreso|rehire|retorno/.test(descriptor)) return 'reingreso';
-  if (/administrativ|actualizacion|modificacion|traslado|correccion|cambiodecampana|cambiodeproveedor/.test(descriptor) || /cambiodecampana|cambiodeproveedor|actualizaciondedatos|correcciondedatos/.test(key(descripcion))) return 'administrativo';
+  if (/administrativ|actualizacion|modificacion|traslado|correccion|cambiodecampana|cambiodeproveedor|cambioderegimen/.test(descriptor) || /cambiodecampana|cambiodeproveedor|actualizaciondedatos|correcciondedatos|cambioderegimen/.test(key(descripcion))) return 'administrativo';
   return 'cese';
 };
 
 export const normalizeTerminations = (rows: Record<string, unknown>[]) => rows.map((raw, index) => {
-  const effectiveDate = value(raw, ['fechaefectiva', 'cese', 'fechabaja', 'fechacese', 'fechadecese', 'fechadebaja', 'fechareingreso', 'fechafin', 'fechainicioyfin', 'periodo', 'fecha']);
+  const effectiveDate = value(raw, ['fechaefectiva', 'cese', 'fechabaja', 'fechacese', 'fechadecese', 'fechadebaja', 'fechareingreso', 'fechafin', 'fechainicioyfin', 'fechainiciofin', 'periodo', 'fecha']);
   const fecha = lastDate(effectiveDate ?? value(raw, ['fechanotificacion', 'fechadenotificacion']));
-  const fecha_alta = firstDate(value(raw, ['alta', 'fechaalta', 'fechadealta', 'fechaingreso', 'fechadeingreso', 'fechaingresolaboral', 'fechainicio', 'fechainicioyfin', 'periodo']));
+  const fecha_alta = firstDate(value(raw, ['alta', 'fechaalta', 'fechadealta', 'fechaingreso', 'fechadeingreso', 'fechaingresolaboral', 'fechainicio', 'fechainicioyfin', 'fechainiciofin', 'periodo']));
   const dni = text(raw, ['dni', 'ce', 'dnice', 'documento', 'numerodocumento', 'numerodedocumento', 'numerodoc', 'nrodocumento', 'ndocumento']);
   const nombre = text(raw, ['nombre', 'nombres', 'nombreyapellido', 'nombreyapellidos', 'nombresyapellidos', 'apellidosynombres', 'colaborador', 'trabajador', 'nombrecompleto']);
-  const campana_origen = text(raw, ['campana', 'campaña', 'servicio', 'empresa']);
+  // The final campaign is always resolved from Formación. This is only the service
+  // declared in Notificaciones and must not turn the employing company into a campaign.
+  const campana_origen = text(raw, ['campana', 'campaña', 'servicio', 'proveedorsocio']);
   const proveedor = text(raw, ['proveedor', 'proveedorsocio', 'proveedorservicio', 'cliente', 'empresa']);
   const motivo = text(raw, ['motivo', 'motivonotificacion', 'motivobaja', 'motivocese', 'motivodecese', 'motivodebaja', 'causal']);
   const descripcion = text(raw, ['descripcion', 'detalle', 'observacion', 'observaciones', 'comentario', 'descripciondelmotivo']);
@@ -169,6 +171,11 @@ type Reconciled = RotationTermination & { estado: string; razon: string; permane
 type Episode = RotationHigh & { exit?: Reconciled; ambiguous?: boolean };
 const elapsedDays = (start: string, end: string) => Math.floor((Date.parse(`${end}T12:00:00Z`) - Date.parse(`${start}T12:00:00Z`)) / 86400000);
 const peruToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+const namesMatch = (notificationName: string, formationName: string) => {
+  const notified = key(notificationName);
+  const formation = key(formationName);
+  return !notified || !formation || notified === formation || notified.includes(formation) || formation.includes(notified);
+};
 
 const reconcile = (notifications: RotationTermination[], highs: RotationHigh[], cutoff: string) => {
   const episodes: Episode[] = [];
@@ -197,10 +204,11 @@ const reconcile = (notifications: RotationTermination[], highs: RotationHigh[], 
     const document = documentKey(source.dni);
     const current = active.get(document);
     const known = current || previous.get(document);
+    const contractualStart = day(source.fecha_alta);
     const row: Reconciled = {
       ...source, nombre: source.nombre || known?.nombre || '',
       campana: known && !known.ambiguous ? known.campana : OTHER_CAMPAIGN,
-      fecha_alta: known?.fecha_alta || source.fecha_alta,
+      fecha_alta: contractualStart || known?.fecha_alta || source.fecha_alta,
       estado: 'Pendiente de validación', razon: source.validacion || '', permanencia_dias: null,
     };
     rows.push(row);
@@ -209,6 +217,9 @@ const reconcile = (notifications: RotationTermination[], highs: RotationHigh[], 
     if (!source.verificado || !day(source.fecha)) { row.razon ||= 'Notificación no verificada'; continue; }
     if (!known) { row.razon = 'Documento o fecha sin alta de Formación'; continue; }
     if (known.ambiguous) { row.razon = 'Más de una campaña sin cese intermedio: requiere validación'; continue; }
+    if (!namesMatch(source.nombre, known.nombre)) {
+      row.campana = OTHER_CAMPAIGN; row.razon = 'Nombre no coincide con el alta de Formación'; continue;
+    }
     if (isRotationCampaign(source.campana_origen) && campaignKey(source.campana_origen) !== campaignKey(known.campana)) {
       row.campana = OTHER_CAMPAIGN; row.razon = 'Campaña notificada distinta de la última alta: requiere validación'; continue;
     }
@@ -219,7 +230,7 @@ const reconcile = (notifications: RotationTermination[], highs: RotationHigh[], 
       row.fecha_alta = source.fecha; row.estado = 'Reingreso'; row.razon = ''; continue;
     }
     if (!current) { row.razon = 'Cese ya conciliado; no hay un nuevo ingreso'; continue; }
-    row.estado = 'Cese efectivo'; row.razon = ''; row.permanencia_dias = elapsedDays(current.fecha_alta, source.fecha);
+    row.estado = 'Cese efectivo'; row.razon = ''; row.permanencia_dias = elapsedDays(contractualStart || current.fecha_alta, source.fecha);
     current.exit = row; active.delete(document);
   }
   return { episodes, rows };

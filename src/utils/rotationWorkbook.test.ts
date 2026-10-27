@@ -46,7 +46,7 @@ test('recognizes provider, company and date ranges stored in one notification ce
   assert.equal(normalized.dni, '00130365');
   assert.equal(normalized.fecha_alta, '2026-10-01');
   assert.equal(normalized.fecha, '2026-10-15');
-  assert.equal(normalized.campana_origen, 'Culqi');
+  assert.equal(normalized.campana_origen, 'Operaciones');
   assert.equal(normalized.proveedor, 'Operaciones');
   assert.equal(normalized.validacion, '');
 });

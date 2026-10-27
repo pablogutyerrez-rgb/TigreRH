@@ -88,6 +88,33 @@ test('unverified, administrative events and unmatched documents never deduct sta
   }
   const data = base(); data.terminations = imported([{ DNI: '00130365', CESE: '20/01/2026', MOTIVO: 'Despido', DESCRIPCION: '15' }]);
   assert.equal(buildRotationDashboard(data).total_bajas, 1);
+  const [administrative] = normalizeTerminations([{ DNI: '00130365', 'FECHA INICIO - FIN': '01/10/2025 - 31/07/2026', 'MOTIVO NOTIFICACIÓN': 'Cambio de Régimen' }]);
+  assert.equal(administrative.tipo, 'administrativo');
+  assert.equal(administrative.verificado, true);
+});
+
+test('Notificaciones contractual dates drive permanence while Formación resolves the campaign', () => {
+  const data = base();
+  data.participants[0].nombres = 'Ana Torres';
+  data.terminations = imported([{
+    DNI: '00130365', 'NOMBRE Y APELLIDO': 'ANA TORRES', 'FECHA INICIO - FIN': '01/01/2026 - 20/01/2026',
+    'MOTIVO NOTIFICACIÓN': 'Renuncia', 'PROVEEDOR SOCIO': 'CULQI', EMPRESA: 'AUTOMATIZATE CORPORATIVO E.I.R.L.',
+  }]);
+  const dashboard = buildRotationDashboard(data);
+  assert.equal(dashboard.total_bajas, 1);
+  assert.equal(dashboard.detalle[0].campana, 'Culqi');
+  assert.equal(dashboard.detalle[0].fecha_alta, '2026-01-01');
+  assert.equal(dashboard.detalle[0].permanencia_dias, 19);
+});
+
+test('a DNI match with a conflicting name remains pending in Otros', () => {
+  const data = base();
+  data.participants[0].nombres = 'Ana Torres';
+  data.terminations = imported([{ DNI: '00130365', 'NOMBRE Y APELLIDO': 'Nombre Distinto', CESE: '20/01/2026', MOTIVO: 'Renuncia' }]);
+  const dashboard = buildRotationDashboard(data);
+  assert.equal(dashboard.total_bajas, 0);
+  assert.equal(dashboard.otros.length, 1);
+  assert.equal(dashboard.detalle[0].razon, 'Nombre no coincide con el alta de Formación');
 });
 
 test('coherent period stock, combined filters, zero staff and as-of dates', () => {
