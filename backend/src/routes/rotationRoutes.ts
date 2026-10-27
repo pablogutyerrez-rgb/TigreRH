@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import {
-  getRotationDashboard, normalizeTerminations, rotationDate, saveRotationImport,
+  getRotationDashboard, normalizeHeadcount, normalizeTerminations, rotationDate, saveHeadcountImport, saveRotationImport,
 } from '../services/rotationService.js';
 import { type AuthenticatedRequest, requireAuth, requireRoleOrModule, requireWritableModule } from '../utils/authMiddleware.js';
 
@@ -12,6 +12,7 @@ const allowed = ['Administrador'];
 const rowsSchema = z.object({
   rows: z.array(z.record(z.string(), z.unknown())).min(1).max(20_000),
 });
+const headcountSchema = z.object({ rows: z.array(z.record(z.string(), z.unknown())).min(1).max(20_000) });
 const querySchema = z.object({
   campaigns: z.preprocess((v) => typeof v === 'string' ? v.split(',').filter(Boolean) : v, z.array(z.string()).optional()),
   months: z.preprocess((v) => typeof v === 'string' ? v.split(',').filter(Boolean) : v, z.array(z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)).optional()),
@@ -46,6 +47,17 @@ router.post('/bajas', requireAuth, requireRoleOrModule(allowed, MODULE), require
   catch (error) {
     if (error instanceof Error && error.message.startsWith('El archivo contiene versiones')) return res.status(400).json({ message: error.message });
     res.status(500).json({ message: 'No se pudo guardar las bajas.' });
+  }
+});
+
+router.post('/dotacion', requireAuth, requireRoleOrModule(allowed, MODULE), requireWritableModule(MODULE), async (req: AuthenticatedRequest, res) => {
+  const parsed = headcountSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: 'La carga debe contener filas de dotación válidas.' });
+  try {
+    normalizeHeadcount(parsed.data.rows);
+    res.status(201).json(await saveHeadcountImport(parsed.data.rows, { uid: req.user!.uid, nombre: req.user!.nombre }));
+  } catch (error) {
+    res.status(400).json({ message: error instanceof Error ? error.message : 'Archivo de dotación inválido.' });
   }
 });
 

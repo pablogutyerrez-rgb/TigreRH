@@ -49,7 +49,8 @@ export type RotationTermination = {
   raw: Record<string, unknown>; imported_at: string; imported_by: string; updated_at?: string;
   raw_history?: Array<{ raw: Record<string, unknown>; imported_at?: string }>;
 };
-type RotationHigh = { id: string; documento: string; dni: string; nombre: string; campana: string; fecha_alta: string; participant_id: string; session_id: string };
+type RotationHigh = { id: string; documento: string; dni: string; nombre: string; campana: string; fecha_alta: string; participant_id: string; session_id: string; fecha_inicio_laboral?: string; source?: 'formation' | 'snapshot' };
+type RotationHeadcount = { id: string; dni: string; nombre: string; campana: string; proveedor: string; estado: string; fecha_alta: string; fecha_corte: string; raw: Record<string, unknown>; imported_at: string; imported_by: string; updated_at?: string };
 
 const classifyNotification = (motivo: string, descripcion: string, tipoSource: string): RotationTermination['tipo'] => {
   const descriptor = key(`${motivo} ${tipoSource}`);
@@ -85,6 +86,22 @@ export const normalizeTerminations = (rows: Record<string, unknown>[]) => rows.m
   const verificado = !validacion;
   const identity = documentKey(dni) || key(nombre);
   return { id: hash('rotation-notification', [identity, fecha, key(motivo)]), fecha, fecha_alta, campana: campana_origen, campana_origen, dni, nombre, proveedor, motivo, descripcion, tipo, verificado, validacion, raw };
+});
+
+const ACTIVE_HEADCOUNT_STATES = ['activo', 'activa', 'laborando', 'altaefectiva', 'altaconfirmada', 'vigente'];
+export const normalizeHeadcount = (rows: Record<string, unknown>[]) => rows.map((raw, index) => {
+  const dni = text(raw, ['dni', 'ce', 'dnice', 'documento', 'numerodocumento', 'numerodedocumento', 'numerodoc', 'nrodocumento', 'ndocumento']);
+  const nombre = text(raw, ['nombre', 'nombres', 'nombreyapellido', 'nombreyapellidos', 'nombresyapellidos', 'apellidosynombres', 'colaborador', 'trabajador', 'nombrecompleto']);
+  const campana = text(raw, ['campana', 'campaña', 'servicio']);
+  const proveedor = text(raw, ['proveedor', 'proveedorsocio', 'proveedorservicio', 'empresa', 'cliente']);
+  const estado = text(raw, ['estado', 'estadoactual', 'situacion', 'situacionlaboral', 'status']);
+  const fecha_alta = firstDate(value(raw, ['fechaingreso', 'fechadeingreso', 'fechaalta', 'fechadealta', 'fecha_inicio', 'fechainicio']));
+  const fecha_corte = lastDate(value(raw, ['fechacorte', 'fechadecorte', 'asof', 'fechaactualizacion', 'fechavigencia', 'fecha']));
+  const missing = [!dni ? 'DNI/CE' : '', !nombre ? 'NOMBRE Y APELLIDO' : '', !campana ? 'CAMPAÑA' : '', !fecha_alta ? 'FECHA DE INGRESO' : '', !fecha_corte ? 'FECHA DE CORTE' : ''].filter(Boolean);
+  if (missing.length) throw new Error(`Fila ${index + 2}: falta ${missing.join(', ')}.`);
+  if (fecha_alta > fecha_corte) throw new Error(`Fila ${index + 2}: la fecha de ingreso no puede ser posterior a la fecha de corte.`);
+  if (!ACTIVE_HEADCOUNT_STATES.includes(key(estado))) throw new Error(`Fila ${index + 2}: el estado debe indicar una persona activa.`);
+  return { id: hash('rotation-headcount', [documentKey(dni), fecha_corte]), dni, nombre, campana, proveedor, estado, fecha_alta, fecha_corte, raw };
 });
 
 const read = async <T extends Row>(collection: string) => {
@@ -167,6 +184,31 @@ export const saveRotationImport = async (rows: Record<string, unknown>[], actor:
   };
 };
 
+export const saveHeadcountImport = async (rows: Record<string, unknown>[], actor: { uid: string; nombre: string }) => {
+  const now = new Date().toISOString();
+  const importId = `rotation-headcount-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const normalized = normalizeHeadcount(rows);
+  const unique = new Map<string, typeof normalized[number]>();
+  for (const row of normalized) {
+    const previous = unique.get(row.id);
+    if (previous && fingerprint(previous.raw) !== fingerprint(row.raw)) throw new Error('El archivo contiene versiones distintas de la misma persona y fecha de corte.');
+    unique.set(row.id, row);
+  }
+  let inserted = 0; let updated = 0; let skipped = normalized.length - unique.size;
+  await adminDb.runTransaction(async (transaction) => {
+    for (const row of [...unique.values()].sort((a, b) => a.id.localeCompare(b.id))) {
+      const ref = adminDb.collection('rotation_headcount_snapshots').doc(row.id);
+      const existing = await transaction.get(ref);
+      const previous = existing.exists ? existing.data() as RotationHeadcount : undefined;
+      if (previous && fingerprint(previous.raw || {}) === fingerprint(row.raw)) { skipped += 1; continue; }
+      transaction.set(ref, { ...row, imported_at: previous?.imported_at || now, imported_by: previous?.imported_by || actor.uid, updated_at: now, import_id: importId });
+      if (previous) updated += 1; else inserted += 1;
+    }
+    transaction.set(adminDb.collection('rotation_imports').doc(importId), { id: importId, type: 'dotacion_actual', row_count: normalized.length, inserted, updated, skipped, imported_at: now, imported_by: actor.uid, imported_by_name: actor.nombre });
+  });
+  return { import_id: importId, received: normalized.length, inserted, updated, skipped };
+};
+
 const fingerprint = (raw: Record<string, unknown>) => hash('revision', Object.keys(raw).sort().map((name) => [name, raw[name]]));
 
 const getHighs = (sessions: StoredRecord[], participants: StoredRecord[], attendance: StoredRecord[]): RotationHigh[] => {
@@ -222,9 +264,9 @@ const reconcile = (notifications: RotationTermination[], highs: RotationHigh[], 
       const current = active.get(high.documento);
       if (current) {
         // Another training is not proof of another employment or of a termination.
-        if (campaignKey(current.campana) !== campaignKey(high.campana)) current.ambiguous = true;
+        if (high.source !== 'snapshot' && campaignKey(current.campana) !== campaignKey(high.campana)) current.ambiguous = true;
       } else {
-        const episode = { ...high };
+        const episode = { ...high, source: high.source || 'formation' };
         episodes.push(episode); active.set(high.documento, episode); previous.set(high.documento, episode);
       }
       continue;
@@ -259,20 +301,32 @@ const reconcile = (notifications: RotationTermination[], highs: RotationHigh[], 
       row.fecha_alta = source.fecha; row.estado = 'Reingreso'; row.razon = ''; continue;
     }
     if (!current) { row.razon = 'Cese ya conciliado; no hay un nuevo ingreso'; continue; }
-    row.estado = 'Cese efectivo'; row.razon = ''; row.permanencia_dias = elapsedDays(contractualStart || current.fecha_alta, source.fecha);
+    row.estado = 'Cese efectivo'; row.razon = ''; row.permanencia_dias = elapsedDays(contractualStart || current.fecha_inicio_laboral || current.fecha_alta, source.fecha);
     current.exit = row; active.delete(document);
   }
   return { episodes, rows };
+};
+
+const snapshotHighs = (snapshots: RotationHeadcount[], cutoff: string): RotationHigh[] => {
+  const latest = new Map<string, RotationHeadcount>();
+  for (const snapshot of snapshots) {
+    const document = documentKey(snapshot.dni);
+    if (!document || snapshot.fecha_corte > cutoff || !isRotationCampaign(snapshot.campana)) continue;
+    const previous = latest.get(document);
+    if (!previous || previous.fecha_corte < snapshot.fecha_corte || (previous.fecha_corte === snapshot.fecha_corte && normalize(previous.updated_at) < normalize(snapshot.updated_at))) latest.set(document, snapshot);
+  }
+  return [...latest.values()].map((snapshot) => ({ id: snapshot.id, documento: documentKey(snapshot.dni), dni: snapshot.dni, nombre: snapshot.nombre, campana: snapshot.campana, fecha_alta: snapshot.fecha_corte, fecha_inicio_laboral: snapshot.fecha_alta, participant_id: `snapshot-${snapshot.id}`, session_id: `snapshot-${snapshot.id}`, source: 'snapshot' }));
 };
 
 const isVisible = (row: { campana: string; fecha: string; dni?: string; nombre?: string }, filters: RotationFilters) =>
   (!filters.campaigns?.length || filters.campaigns.includes(row.campana)) && (!filters.months?.length || filters.months.includes(row.fecha.slice(0, 7))) &&
   isWithin(row.fecha, filters.from, filters.to) && (!filters.search || key(`${row.dni || ''} ${row.nombre || ''}`).includes(key(filters.search)));
 
-export const buildRotationDashboard = (data: { sessions: StoredRecord[]; participants: StoredRecord[]; attendance: StoredRecord[]; terminations: RotationTermination[] }, filters: RotationFilters = {}, today = peruToday()) => {
-  const highs = getHighs(data.sessions, data.participants, data.attendance);
+export const buildRotationDashboard = (data: { sessions: StoredRecord[]; participants: StoredRecord[]; attendance: StoredRecord[]; terminations: RotationTermination[]; headcount?: RotationHeadcount[] }, filters: RotationFilters = {}, today = peruToday()) => {
+  const formationHighs = getHighs(data.sessions, data.participants, data.attendance);
   const endOfMonth = (month: string) => new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 0)).toISOString().slice(0, 10);
   const cutoff = [today, filters.to, filters.months?.length ? endOfMonth([...filters.months].sort().at(-1)!) : undefined].filter((date): date is string => Boolean(date)).sort()[0];
+  const highs = [...formationHighs, ...snapshotHighs(data.headcount || [], cutoff)];
   const { episodes, rows } = reconcile(data.terminations, highs, cutoff);
   const hasPeriod = (!filters.from || filters.from <= cutoff) && (!filters.months?.length || filters.months.some((month) => `${month}-01` <= cutoff && (!filters.from || endOfMonth(month) >= filters.from)));
   const identityFilters = { ...filters, months: undefined, from: undefined, to: undefined };
@@ -313,7 +367,7 @@ export const buildRotationDashboard = (data: { sessions: StoredRecord[]; partici
 };
 
 export const getRotationDashboard = async (filters: RotationFilters = {}) => {
-  const [sessions, participants, attendance, notifications, legacy] = await Promise.all([read<StoredRecord>('sessions'), read<StoredRecord>('participants'), read<StoredRecord>('attendance'), read<RotationTermination & Row>('rotation_notifications'), read<StoredRecord>('rotation_terminations')]);
+  const [sessions, participants, attendance, notifications, legacy, headcount] = await Promise.all([read<StoredRecord>('sessions'), read<StoredRecord>('participants'), read<StoredRecord>('attendance'), read<RotationTermination & Row>('rotation_notifications'), read<StoredRecord>('rotation_terminations'), read<RotationHeadcount & Row>('rotation_headcount_snapshots')]);
   // Legacy imports remain read-only; new versions supersede their logical event in the view.
   const combined = new Map<string, RotationTermination>();
   for (const record of legacy) {
@@ -326,7 +380,7 @@ export const getRotationDashboard = async (filters: RotationFilters = {}) => {
     const row = hydrateRotationTermination(stored);
     combined.set(`${documentKey(row.dni) || key(row.nombre)}:${row.fecha}:${key(row.motivo)}`, row);
   }
-  return buildRotationDashboard({ sessions, participants, attendance, terminations: [...combined.values()] }, filters);
+  return buildRotationDashboard({ sessions, participants, attendance, terminations: [...combined.values()], headcount }, filters);
 };
 
 export const getRotationRateForEvaluation = async (filters: { campaigns?: string[]; year: number; months: number[] }) => {

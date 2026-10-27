@@ -3,8 +3,9 @@ import * as XLSX from 'xlsx';
 import { AlertCircle, BarChart3, Clock3, Download, Filter, Funnel as FunnelIcon, RefreshCw, Save, Search, Upload, UserMinus, Users } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Cell, Funnel, FunnelChart, LabelList, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { User } from '../types';
-import { getRotationDashboard, saveRotationRows, type RotationDashboard } from '../services/rotationService';
+import { getRotationDashboard, saveHeadcountRows, saveRotationRows, type RotationDashboard } from '../services/rotationService';
 import { parseRotationWorkbook } from '../utils/rotationWorkbook';
+import { parseHeadcountWorkbook } from '../utils/rotationHeadcountWorkbook';
 import CampaignMultiSelect from './CampaignMultiSelect';
 
 interface RotacionProps { currentUser: User; }
@@ -18,8 +19,8 @@ export default function Rotacion({ currentUser }: RotacionProps) {
   const [data, setData] = useState<RotationDashboard>(emptyData);
   const [campaigns, setCampaigns] = useState<string[]>([]); const [months, setMonths] = useState<string[]>([]);
   const [from, setFrom] = useState(''); const [to, setTo] = useState(''); const [search, setSearch] = useState('');
-  const [pending, setPending] = useState<Record<string, unknown>[]>([]); const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState(''); const [error, setError] = useState(''); const input = useRef<HTMLInputElement>(null);
+  const [pending, setPending] = useState<Record<string, unknown>[]>([]); const [pendingHeadcount, setPendingHeadcount] = useState<Record<string, unknown>[]>([]); const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState(''); const [error, setError] = useState(''); const input = useRef<HTMLInputElement>(null); const headcountInput = useRef<HTMLInputElement>(null);
   const [refresh, setRefresh] = useState(0); const readOnly = Boolean(currentUser.module_view_only?.includes('formacion:rotacion'));
   useEffect(() => {
     if (from && to && from > to) { setError('Desde no puede ser posterior a Hasta.'); setLoading(false); return; }
@@ -55,6 +56,21 @@ export default function Rotacion({ currentUser }: RotacionProps) {
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudo guardar la importación.'); }
     finally { setSaving(false); }
   };
+  const stageHeadcount = async (file?: File) => {
+    if (!file) return;
+    try { setError(''); setMessage(''); const rows = parseHeadcountWorkbook(await file.arrayBuffer()); setPendingHeadcount(rows); setMessage(`Dotación validada: ${rows.length} personas activas listas para importar.`); }
+    catch (reason) { setPendingHeadcount([]); setError(reason instanceof Error ? reason.message : 'No se pudo leer el Excel de dotación.'); }
+  };
+  const saveHeadcount = async () => {
+    if (!pendingHeadcount.length) return;
+    setSaving(true); setError(''); setMessage('');
+    try {
+      const result = await saveHeadcountRows(pendingHeadcount); setPendingHeadcount([]);
+      setMessage(`Dotación procesada: ${result.received}; nuevas: ${result.inserted}; actualizadas: ${result.updated}; sin cambios: ${result.skipped}.`);
+      if (headcountInput.current) headcountInput.current.value = ''; setRefresh((value) => value + 1);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudo guardar la dotación.'); }
+    finally { setSaving(false); }
+  };
   const clear = () => { setCampaigns([]); setMonths([]); setFrom(''); setTo(''); setSearch(''); setError(''); };
   const exportDetail = () => {
     const rows = data.detalle.map((item) => ({ Nombre: cell(item.nombre), Documento: cell(item.dni), Campaña: cell(item.campana), Proveedor: cell(item.proveedor), Alta: cell(item.fecha_alta), 'Fecha de cese': cell(item.fecha), Motivo: cell(item.motivo), 'Descripción / observación': cell(item.descripcion), 'Permanencia (días)': item.permanencia_dias ?? '', Estado: cell(item.estado), Validación: cell(item.razon) }));
@@ -70,7 +86,7 @@ export default function Rotacion({ currentUser }: RotacionProps) {
       <label className="text-[10px] font-black uppercase text-slate-500">Desde<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-xs" /></label>
       <label className="text-[10px] font-black uppercase text-slate-500">Hasta<input type="date" value={to} onChange={(event) => setTo(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-xs" /></label>
       <label className="text-[10px] font-black uppercase text-slate-500">Buscar<div className="relative mt-1"><Search className="absolute left-2 top-2 h-3.5 w-3.5 text-slate-400" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="DNI o nombre" className="w-full rounded-lg border border-slate-200 py-2 pl-7 pr-2 text-xs" /></div></label>
-      <div className="flex items-end gap-2 xl:col-span-2"><button onClick={clear} className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700"><RefreshCw className="h-3.5 w-3.5" />Limpiar</button>{!readOnly && <><input ref={input} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(event) => void stage(event.target.files?.[0])} /><button onClick={() => input.current?.click()} className="inline-flex h-9 items-center gap-2 rounded-lg bg-violet-600 px-3 text-xs font-bold text-white"><Upload className="h-3.5 w-3.5" />Cargar rotación</button>{pending.length > 0 && <button disabled={saving} onClick={() => void save()} className="inline-flex h-9 items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 text-xs font-bold text-violet-700 disabled:opacity-50"><Save className="h-3.5 w-3.5" />{saving ? 'Guardando...' : `Guardar (${pending.length})`}</button>}</>}</div>
+      <div className="flex flex-wrap items-end gap-2 xl:col-span-2"><button onClick={clear} className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700"><RefreshCw className="h-3.5 w-3.5" />Limpiar</button>{!readOnly && <><input ref={input} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(event) => void stage(event.target.files?.[0])} /><input ref={headcountInput} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(event) => void stageHeadcount(event.target.files?.[0])} /><button onClick={() => input.current?.click()} className="inline-flex h-9 items-center gap-2 rounded-lg bg-violet-600 px-3 text-xs font-bold text-white"><Upload className="h-3.5 w-3.5" />Cargar rotación</button><button onClick={() => headcountInput.current?.click()} className="inline-flex h-9 items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 text-xs font-bold text-violet-700"><Users className="h-3.5 w-3.5" />Cargar dotación</button>{pending.length > 0 && <button disabled={saving} onClick={() => void save()} className="inline-flex h-9 items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 text-xs font-bold text-violet-700 disabled:opacity-50"><Save className="h-3.5 w-3.5" />{saving ? 'Guardando...' : `Guardar rotación (${pending.length})`}</button>}{pendingHeadcount.length > 0 && <button disabled={saving} onClick={() => void saveHeadcount()} className="inline-flex h-9 items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-xs font-bold text-emerald-700 disabled:opacity-50"><Save className="h-3.5 w-3.5" />{saving ? 'Guardando...' : `Guardar dotación (${pendingHeadcount.length})`}</button>}</>}</div>
     </div></section>
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Metric title="Dotación activa" value={String(data.total_dotacion)} icon={<Users className="h-5 w-5" />} tone="violet" /><Metric title="Ceses" value={String(data.total_bajas)} icon={<UserMinus className="h-5 w-5" />} tone="coral" /><Metric title="Rotación" value={percent(data.porcentaje_rotacion)} icon={<BarChart3 className="h-5 w-5" />} tone="green" /><Metric title="Permanencia promedio" value={data.permanencia_promedio == null ? 'Sin datos' : `${data.permanencia_promedio} días`} icon={<Clock3 className="h-5 w-5" />} tone="amber" /></div>
     <Panel title="Embudo de rotación" icon={<FunnelIcon className="h-4 w-4 text-violet-600" />}><div className="grid items-center gap-4 md:grid-cols-[1.4fr_1fr]"><div className="h-56"><ResponsiveContainer width="100%" height="100%"><FunnelChart><Tooltip formatter={(value: number, _name, item) => [`${value} (${data.funnel.altas ? (value / data.funnel.altas * 100).toFixed(1) : '0'}%)`, item.payload.name]} /><Funnel dataKey="value" data={funnel} isAnimationActive={false}>{funnel.map((entry) => <Cell key={entry.name} fill={entry.fill} />)}<LabelList position="right" fill="#334155" stroke="none" dataKey="name" /></Funnel></FunnelChart></ResponsiveContainer></div><div className="space-y-3">{funnel.map((item) => <div key={item.name} className="flex items-center justify-between border-b border-slate-100 pb-2 text-xs"><span className="flex items-center gap-2 font-semibold text-slate-600"><i className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.fill }} />{item.name}</span><strong className="text-slate-900">{item.value} <span className="font-medium text-slate-400">{data.funnel.altas ? `(${(item.value / data.funnel.altas * 100).toFixed(1)}%)` : '(0.0%)'}</span></strong></div>)}</div></div></Panel>

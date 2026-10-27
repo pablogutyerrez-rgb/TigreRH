@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildRotationDashboard, hydrateRotationTermination, normalizeTerminations, rotationDate, saveRotationImport, getRotationDashboard, type RotationTermination } from './rotationService.js';
+import { buildRotationDashboard, hydrateRotationTermination, normalizeHeadcount, normalizeTerminations, rotationDate, saveRotationImport, getRotationDashboard, type RotationTermination } from './rotationService.js';
 import { dataDb } from '../hybridDb.js';
 
 const notification = (dni: string, fecha: string, motivo = 'Renuncia'): RotationTermination => ({
@@ -128,6 +128,15 @@ test('rehydrates older notifications from their original Excel row without chang
   assert.equal(restored.nombre, 'MARIO ANDRE PANIZO CORONEL');
   assert.equal(restored.motivo, 'Renuncia');
   assert.equal(restored.verificado, true);
+});
+
+test('active headcount snapshots supplement current staffing without duplicating Formación highs', () => {
+  const [snapshot] = normalizeHeadcount([{ DNI: '00999999', 'NOMBRE Y APELLIDO': 'Bruno Activo', CAMPAÑA: 'Culqi', ESTADO: 'Activo', 'FECHA DE INGRESO': '01/02/2026', 'FECHA DE CORTE': '20/02/2026' }]);
+  const data = base();
+  const dashboard = buildRotationDashboard({ ...data, headcount: [{ ...snapshot, imported_at: '', imported_by: '' }] }, {}, '2026-02-20');
+  assert.equal(dashboard.total_dotacion, 2);
+  assert.equal(dashboard.altas_historicas, 2);
+  assert.throws(() => normalizeHeadcount([{ DNI: '00999999', 'NOMBRE Y APELLIDO': 'Bruno Activo', CAMPAÑA: 'Culqi', ESTADO: 'Cesado', 'FECHA DE INGRESO': '01/02/2026', 'FECHA DE CORTE': '20/02/2026' }]));
 });
 
 test('coherent period stock, combined filters, zero staff and as-of dates', () => {

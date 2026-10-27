@@ -34,3 +34,4 @@ export const getRotationDashboard = (filters: RotationFilters = {}, signal?: Abo
   return request<RotationDashboard>(`/api/formacion/rotacion${query.size ? `?${query}` : ''}`, { signal });
 };
 export const saveRotationRows = (rows: Record<string, unknown>[]) => request<{ received: number; inserted: number; updated: number; skipped: number; confirmed: number; pending: number }>('/api/formacion/rotacion/bajas', { method: 'POST', body: JSON.stringify({ rows }) });
+export const saveHeadcountRows = (rows: Record<string, unknown>[]) => request<{ received: number; inserted: number; updated: number; skipped: number }>('/api/formacion/rotacion/dotacion', { method: 'POST', body: JSON.stringify({ rows }) });

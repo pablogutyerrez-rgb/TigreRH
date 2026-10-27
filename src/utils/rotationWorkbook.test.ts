@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as XLSX from 'xlsx';
 import { parseRotationWorkbook } from './rotationWorkbook';
+import { parseHeadcountWorkbook } from './rotationHeadcountWorkbook';
 import { normalizeTerminations } from '../../backend/src/services/rotationService';
 
 test('Notificaciones Excel round-trip preserves document zeros, dates, long descriptions and sheet selection', () => {
@@ -55,4 +56,17 @@ test('requires the Notificaciones sheet and ignores unrelated sheets', () => {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['DNI', 'Cese'], ['1', '20/10/2026']]), 'BASE');
   assert.throws(() => parseRotationWorkbook(XLSX.write(workbook, { type: 'array', bookType: 'xlsx' })), /Notificaciones/);
+});
+
+test('reads the active headcount workbook while preserving document zeros', () => {
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet([
+    ['DNI', 'NOMBRE Y APELLIDO', 'CAMPAÑA', 'ESTADO', 'FECHA DE INGRESO', 'FECHA DE CORTE'],
+    [130365, 'Ana Activa', 'Culqi', 'Activo', '01/10/2026', '31/10/2026'],
+  ]);
+  sheet.A2.z = '00000000';
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Dotación actual');
+  const [row] = parseHeadcountWorkbook(XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }));
+  assert.equal(row.DNI, '00130365');
+  assert.equal(row.ESTADO, 'Activo');
 });
