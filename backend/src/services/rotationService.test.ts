@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildRotationDashboard, normalizeTerminations, rotationDate, saveRotationImport, getRotationDashboard, type RotationTermination } from './rotationService.js';
+import { buildRotationDashboard, hydrateRotationTermination, normalizeTerminations, rotationDate, saveRotationImport, getRotationDashboard, type RotationTermination } from './rotationService.js';
 import { dataDb } from '../hybridDb.js';
 
 const notification = (dni: string, fecha: string, motivo = 'Renuncia'): RotationTermination => ({
@@ -115,6 +115,19 @@ test('a DNI match with a conflicting name remains pending in Otros', () => {
   assert.equal(dashboard.total_bajas, 0);
   assert.equal(dashboard.otros.length, 1);
   assert.equal(dashboard.detalle[0].razon, 'Nombre no coincide con el alta de Formación');
+});
+
+test('rehydrates older notifications from their original Excel row without changing the record id', () => {
+  const restored = hydrateRotationTermination({
+    id: 'historic-row', dni: '77103807', fecha: '2026-06-03', fecha_alta: '2026-05-18', campana: '', campana_origen: '',
+    nombre: '', proveedor: 'STRATEGIC PAY GROUP E.I.R.L.', motivo: '', descripcion: '', tipo: 'cese', verificado: false,
+    validacion: 'Motivo de cese no verificado', imported_at: '2026-10-27T00:00:00.000Z', imported_by: 'admin',
+    raw: { 'NOMBRE Y APELLIDO': 'MARIO ANDRE PANIZO CORONEL', DNI: '77103807', 'FECHA INICIO - FIN': '18/05/2026 - 03/06/2026', 'MOTIVO NOTIFICACIÓN': 'Renuncia', 'PROVEEDOR SOCIO': 'CULQI' },
+  });
+  assert.equal(restored.id, 'historic-row');
+  assert.equal(restored.nombre, 'MARIO ANDRE PANIZO CORONEL');
+  assert.equal(restored.motivo, 'Renuncia');
+  assert.equal(restored.verificado, true);
 });
 
 test('coherent period stock, combined filters, zero staff and as-of dates', () => {

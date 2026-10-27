@@ -92,6 +92,35 @@ const read = async <T extends Row>(collection: string) => {
   return snapshot.docs.map((document) => ({ id: document.id, ...document.data() }) as T);
 };
 
+const asRecord = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+
+// Older imports preserved the original Excel row but did not recognize some of
+// its headers. Rebuild the derived fields at read time without mutating history.
+export const hydrateRotationTermination = (stored: RotationTermination & Row): RotationTermination => {
+  const source = { ...asRecord(stored.raw) };
+  const fallback = (header: string, entry: unknown) => { if (normalize(entry)) source[header] = entry; };
+  fallback('DNI', stored.dni);
+  fallback('Fecha', stored.fecha);
+  fallback('Alta', stored.fecha_alta);
+  fallback('Motivo', stored.motivo);
+  fallback('Tipo', stored.tipo);
+  fallback('Nombre', stored.nombre);
+  fallback('Proveedor', stored.proveedor);
+  fallback('Descripción', stored.descripcion);
+  try {
+    const [normalized] = normalizeTerminations([source]);
+    return {
+      ...normalized,
+      id: stored.id,
+      imported_at: normalize(stored.imported_at),
+      imported_by: normalize(stored.imported_by),
+      updated_at: normalize(stored.updated_at),
+    };
+  } catch {
+    return stored;
+  }
+};
+
 export const saveRotationImport = async (rows: Record<string, unknown>[], actor: { uid: string; nombre: string }) => {
   const now = new Date().toISOString();
   const importId = `rotation-import-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -288,14 +317,15 @@ export const getRotationDashboard = async (filters: RotationFilters = {}) => {
   // Legacy imports remain read-only; new versions supersede their logical event in the view.
   const combined = new Map<string, RotationTermination>();
   for (const record of legacy) {
-    try {
-      const [row] = normalizeTerminations([{ ...(record.raw as Record<string, unknown> || {}), DNI: record.dni, Fecha: record.fecha, Alta: record.fecha_alta, Motivo: record.motivo, Tipo: record.tipo, Nombre: record.nombre }]);
-      combined.set(`${documentKey(row.dni) || key(row.nombre)}:${row.fecha}:${key(row.motivo)}`, { ...row, id: record.id, imported_at: normalize(record.imported_at), imported_by: normalize(record.imported_by) });
-    } catch {
-      combined.set(`legacy:${record.id}`, { id: record.id, fecha: day(record.fecha), fecha_alta: day(record.fecha_alta), campana: '', campana_origen: normalize(record.campana), dni: normalize(record.dni), nombre: normalize(record.nombre), proveedor: normalize(record.proveedor), motivo: normalize(record.motivo), descripcion: normalize(record.descripcion), tipo: 'cese', verificado: false, validacion: 'Registro histórico con fecha o identidad incompleta', raw: record.raw as Record<string, unknown> || record, imported_at: normalize(record.imported_at), imported_by: normalize(record.imported_by) });
-    }
+    const row = hydrateRotationTermination({
+      id: record.id, fecha: day(record.fecha), fecha_alta: day(record.fecha_alta), campana: normalize(record.campana), campana_origen: normalize(record.campana), dni: normalize(record.dni), nombre: normalize(record.nombre), proveedor: normalize(record.proveedor), motivo: normalize(record.motivo), descripcion: normalize(record.descripcion), tipo: record.tipo === 'reingreso' || record.tipo === 'administrativo' ? record.tipo : 'cese', verificado: Boolean(record.verificado), validacion: normalize(record.validacion), raw: asRecord(record.raw), imported_at: normalize(record.imported_at), imported_by: normalize(record.imported_by), updated_at: normalize(record.updated_at),
+    });
+    combined.set(`${documentKey(row.dni) || key(row.nombre)}:${row.fecha}:${key(row.motivo)}`, row);
   }
-  for (const row of notifications.sort((a, b) => normalize(a.updated_at || a.imported_at).localeCompare(normalize(b.updated_at || b.imported_at)))) combined.set(`${documentKey(row.dni) || key(row.nombre)}:${row.fecha}:${key(row.motivo)}`, row);
+  for (const stored of notifications.sort((a, b) => normalize(a.updated_at || a.imported_at).localeCompare(normalize(b.updated_at || b.imported_at)))) {
+    const row = hydrateRotationTermination(stored);
+    combined.set(`${documentKey(row.dni) || key(row.nombre)}:${row.fecha}:${key(row.motivo)}`, row);
+  }
   return buildRotationDashboard({ sessions, participants, attendance, terminations: [...combined.values()] }, filters);
 };
 
