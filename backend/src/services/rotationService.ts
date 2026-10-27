@@ -94,7 +94,7 @@ export const normalizeHeadcount = (rows: Record<string, unknown>[]) => rows.map(
   const nombre = text(raw, ['nombre', 'nombres', 'nombreyapellido', 'nombreyapellidos', 'nombresyapellidos', 'apellidosynombres', 'colaborador', 'trabajador', 'nombrecompleto']);
   const campana = text(raw, ['campana', 'campaña', 'servicio']);
   const proveedor = text(raw, ['proveedor', 'proveedorsocio', 'proveedorservicio', 'empresa', 'cliente']);
-  const estado = text(raw, ['estado', 'estadoactual', 'situacion', 'situacionlaboral', 'status']);
+  const estado = text(raw, ['estado', 'estadoactual', 'situacion', 'situacionlaboral', 'status']) || 'Activo';
   const fecha_alta = firstDate(value(raw, ['fechaingreso', 'fechadeingreso', 'fechaalta', 'fechadealta', 'fecha_inicio', 'fechainicio']));
   const fecha_corte = lastDate(value(raw, ['fechacorte', 'fechadecorte', 'asof', 'fechaactualizacion', 'fechavigencia', 'fecha']));
   const missing = [!dni ? 'DNI/CE' : '', !nombre ? 'NOMBRE Y APELLIDO' : '', !campana ? 'CAMPAÑA' : '', !fecha_alta ? 'FECHA DE INGRESO' : '', !fecha_corte ? 'FECHA DE CORTE' : ''].filter(Boolean);

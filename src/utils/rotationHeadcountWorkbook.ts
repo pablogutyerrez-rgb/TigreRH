@@ -6,12 +6,14 @@ const dateHeaders = new Set(['fechacorte', 'fechadecorte', 'asof', 'fechaactuali
 
 export function parseHeadcountWorkbook(content: ArrayBuffer) {
   const workbook = XLSX.read(content, { type: 'array', cellDates: true });
-  const name = workbook.SheetNames.find((sheetName) => ['dotacion', 'dotacionactual', 'activos'].includes(key(sheetName)));
-  if (!name) throw new Error('El archivo debe contener una hoja llamada Dotación actual o Activos.');
-  const sheet = workbook.Sheets[name];
-  const grid = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', blankrows: true });
-  const headerRow = grid.findIndex((row) => row.some((cell) => documentHeaders.has(key(cell))) && row.some((cell) => dateHeaders.has(key(cell))));
-  if (headerRow < 0) throw new Error('La hoja de dotación debe incluir DNI/CE y Fecha de corte.');
+  const source = workbook.SheetNames.map((name) => {
+    const sheet = workbook.Sheets[name];
+    const grid = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', blankrows: true });
+    const headerRow = grid.findIndex((row) => row.some((cell) => documentHeaders.has(key(cell))) && row.some((cell) => dateHeaders.has(key(cell))));
+    return { sheet, grid, headerRow };
+  }).find((candidate) => candidate.headerRow >= 0);
+  if (!source) throw new Error('El archivo debe incluir una hoja con DNI/CE y Fecha de corte.');
+  const { sheet, grid, headerRow } = source;
   const headers = grid[headerRow].map((cell) => String(cell).trim());
   const normalized = headers.filter(Boolean).map(key);
   if (new Set(normalized).size !== normalized.length) throw new Error('Hay encabezados duplicados en la hoja de dotación.');

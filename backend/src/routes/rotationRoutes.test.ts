@@ -32,9 +32,12 @@ test('Rotation routes preserve authentication, module access and read-only permi
   assert.equal((await request('denied')).status, 403);
   for (const token of ['admin', 'reader', 'writer']) assert.equal((await request(token)).status, 200);
   const rows = [{ DNI: '00130365', CESE: '20/10/2026', MOTIVO: 'Renuncia' }];
+  const headcount = [{ DNI: '00130365', 'NOMBRE Y APELLIDO': 'Ana Activa', CAMPAÑA: 'Culqi', 'FECHA DE INGRESO': '01/10/2026', 'FECHA DE CORTE': '31/10/2026' }];
   assert.equal((await request('reader', '/bajas', 'POST', rows)).status, 403); assert.equal(writes, 0);
   assert.equal((await request('denied', '/bajas', 'POST', rows)).status, 403); assert.equal(writes, 0);
   for (const token of ['admin', 'writer']) assert.equal((await request(token, '/bajas', 'POST', rows)).status, 201);
+  assert.equal((await request('reader', '/dotacion', 'POST', headcount)).status, 403);
+  for (const token of ['admin', 'writer']) assert.equal((await request(token, '/dotacion', 'POST', headcount)).status, 201);
   for (const query of ['?months=2026-13', '?from=2026-02-31', '?from=2026-10-22&to=2026-10-01']) assert.equal((await request('admin', query)).status, 400);
   assert.equal((await request('admin', '/bajas', 'POST', [{ DNI: '1', CESE: '31/02/2026' }])).status, 400);
 });

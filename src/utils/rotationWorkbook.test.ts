@@ -58,15 +58,15 @@ test('requires the Notificaciones sheet and ignores unrelated sheets', () => {
   assert.throws(() => parseRotationWorkbook(XLSX.write(workbook, { type: 'array', bookType: 'xlsx' })), /Notificaciones/);
 });
 
-test('reads the active headcount workbook while preserving document zeros', () => {
+test('reads a detected active headcount sheet while preserving document zeros', () => {
   const workbook = XLSX.utils.book_new();
   const sheet = XLSX.utils.aoa_to_sheet([
-    ['DNI', 'NOMBRE Y APELLIDO', 'CAMPAÑA', 'ESTADO', 'FECHA DE INGRESO', 'FECHA DE CORTE'],
-    [130365, 'Ana Activa', 'Culqi', 'Activo', '01/10/2026', '31/10/2026'],
+    ['DNI', 'NOMBRE Y APELLIDO', 'CAMPAÑA', 'FECHA DE INGRESO', 'FECHA DE CORTE'],
+    [130365, 'Ana Activa', 'Culqi', '01/10/2026', '31/10/2026'],
   ]);
   sheet.A2.z = '00000000';
-  XLSX.utils.book_append_sheet(workbook, sheet, 'Dotación actual');
+  XLSX.utils.book_append_sheet(workbook, sheet, 'BASE ACTIVA');
   const [row] = parseHeadcountWorkbook(XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }));
   assert.equal(row.DNI, '00130365');
-  assert.equal(row.ESTADO, 'Activo');
+  assert.equal(row.CAMPAÑA, 'Culqi');
 });
