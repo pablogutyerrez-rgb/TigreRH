@@ -141,7 +141,7 @@ test('active headcount snapshots supplement current staffing without duplicating
 });
 
 test('historical active roster preserves operational fields and does not duplicate a Formación high', () => {
-  const [snapshot] = normalizeHeadcount([{ DNI: '00130365', 'NOMBRE COMPLETO': 'Ana', CAMPAÑA: 'Culqi', ESTADO: 'Activo', SUCURSAL: 'Lima', TURNO: 'Full time', CARGO: 'Ejecutivo', 'JEFE INMEDIATO': 'Supervisora', 'FECHA INICIO': '01/01/2026', 'FECHA DE CORTE': '20/02/2026' }]);
+  const [snapshot] = normalizeHeadcount([{ DNI: '00130365', 'NOMBRE COMPLETO': 'Ana', CAMPAÑA: 'Culqi', ESTADO: 'Activo', Ciudad: 'Lima', TURNO: 'Full time', 'Perfil/Puesto': 'Ejecutivo', Supervisor: 'Supervisora', 'FECHA INICIO': '01/01/2026', 'FECHA DE CORTE': '20/02/2026' }]);
   const dashboard = buildRotationDashboard({ ...base(), headcount: [{ ...snapshot, imported_at: '', imported_by: '' }] }, {}, '2026-02-20');
   assert.equal(snapshot.supervisor, 'Supervisora');
   assert.equal(dashboard.total_dotacion, 1);

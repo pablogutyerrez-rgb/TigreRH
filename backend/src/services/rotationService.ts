@@ -97,7 +97,7 @@ export const normalizeHeadcount = (rows: Record<string, unknown>[]) => rows.map(
   const estado = text(raw, ['estado', 'estadoactual', 'situacion', 'situacionlaboral', 'status']) || 'Activo';
   const sucursal = text(raw, ['sucursal', 'sede', 'ciudad', 'local']);
   const turno = text(raw, ['turno', 'horario']);
-  const cargo = text(raw, ['cargo', 'puesto', 'posicion', 'posición']);
+  const cargo = text(raw, ['cargo', 'puesto', 'perfilpuesto', 'posicion', 'posición']);
   const supervisor = text(raw, ['supervisor', 'jefeinmediato', 'jefe', 'responsabledirecto']);
   const fecha_alta = firstDate(value(raw, ['fechaingreso', 'fechadeingreso', 'fechaalta', 'fechadealta', 'fecha_inicio', 'fechainicio']));
   const fecha_corte = lastDate(value(raw, ['fechacorte', 'fechadecorte', 'asof', 'fechaactualizacion', 'fechavigencia', 'fecha']));
