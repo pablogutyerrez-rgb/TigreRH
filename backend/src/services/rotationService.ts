@@ -50,7 +50,7 @@ export type RotationTermination = {
   raw_history?: Array<{ raw: Record<string, unknown>; imported_at?: string }>;
 };
 type RotationHigh = { id: string; documento: string; dni: string; nombre: string; campana: string; fecha_alta: string; participant_id: string; session_id: string; fecha_inicio_laboral?: string; source?: 'formation' | 'snapshot' };
-type RotationHeadcount = { id: string; dni: string; nombre: string; campana: string; proveedor: string; estado: string; fecha_alta: string; fecha_corte: string; raw: Record<string, unknown>; imported_at: string; imported_by: string; updated_at?: string };
+type RotationHeadcount = { id: string; dni: string; nombre: string; campana: string; proveedor: string; estado: string; sucursal: string; turno: string; cargo: string; supervisor: string; fecha_alta: string; fecha_corte: string; raw: Record<string, unknown>; imported_at: string; imported_by: string; updated_at?: string };
 
 const classifyNotification = (motivo: string, descripcion: string, tipoSource: string): RotationTermination['tipo'] => {
   const descriptor = key(`${motivo} ${tipoSource}`);
@@ -95,13 +95,17 @@ export const normalizeHeadcount = (rows: Record<string, unknown>[]) => rows.map(
   const campana = text(raw, ['campana', 'campaña', 'servicio']);
   const proveedor = text(raw, ['proveedor', 'proveedorsocio', 'proveedorservicio', 'empresa', 'cliente']);
   const estado = text(raw, ['estado', 'estadoactual', 'situacion', 'situacionlaboral', 'status']) || 'Activo';
+  const sucursal = text(raw, ['sucursal', 'sede', 'ciudad', 'local']);
+  const turno = text(raw, ['turno', 'horario']);
+  const cargo = text(raw, ['cargo', 'puesto', 'posicion', 'posición']);
+  const supervisor = text(raw, ['supervisor', 'jefeinmediato', 'jefe', 'responsabledirecto']);
   const fecha_alta = firstDate(value(raw, ['fechaingreso', 'fechadeingreso', 'fechaalta', 'fechadealta', 'fecha_inicio', 'fechainicio']));
   const fecha_corte = lastDate(value(raw, ['fechacorte', 'fechadecorte', 'asof', 'fechaactualizacion', 'fechavigencia', 'fecha']));
   const missing = [!dni ? 'DNI/CE' : '', !nombre ? 'NOMBRE Y APELLIDO' : '', !campana ? 'CAMPAÑA' : '', !fecha_alta ? 'FECHA DE INGRESO' : '', !fecha_corte ? 'FECHA DE CORTE' : ''].filter(Boolean);
   if (missing.length) throw new Error(`Fila ${index + 2}: falta ${missing.join(', ')}.`);
   if (fecha_alta > fecha_corte) throw new Error(`Fila ${index + 2}: la fecha de ingreso no puede ser posterior a la fecha de corte.`);
   if (!ACTIVE_HEADCOUNT_STATES.includes(key(estado))) throw new Error(`Fila ${index + 2}: el estado debe indicar una persona activa.`);
-  return { id: hash('rotation-headcount', [documentKey(dni), fecha_corte]), dni, nombre, campana, proveedor, estado, fecha_alta, fecha_corte, raw };
+  return { id: hash('rotation-headcount', [documentKey(dni), fecha_corte]), dni, nombre, campana, proveedor, estado, sucursal, turno, cargo, supervisor, fecha_alta, fecha_corte, raw };
 });
 
 const read = async <T extends Row>(collection: string) => {

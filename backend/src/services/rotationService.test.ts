@@ -140,6 +140,14 @@ test('active headcount snapshots supplement current staffing without duplicating
   assert.throws(() => normalizeHeadcount([{ DNI: '00999999', 'NOMBRE Y APELLIDO': 'Bruno Activo', CAMPAÑA: 'Culqi', ESTADO: 'Cesado', 'FECHA DE INGRESO': '01/02/2026', 'FECHA DE CORTE': '20/02/2026' }]));
 });
 
+test('historical active roster preserves operational fields and does not duplicate a Formación high', () => {
+  const [snapshot] = normalizeHeadcount([{ DNI: '00130365', 'NOMBRE COMPLETO': 'Ana', CAMPAÑA: 'Culqi', ESTADO: 'Activo', SUCURSAL: 'Lima', TURNO: 'Full time', CARGO: 'Ejecutivo', 'JEFE INMEDIATO': 'Supervisora', 'FECHA INICIO': '01/01/2026', 'FECHA DE CORTE': '20/02/2026' }]);
+  const dashboard = buildRotationDashboard({ ...base(), headcount: [{ ...snapshot, imported_at: '', imported_by: '' }] }, {}, '2026-02-20');
+  assert.equal(snapshot.supervisor, 'Supervisora');
+  assert.equal(dashboard.total_dotacion, 1);
+  assert.equal(dashboard.altas_historicas, 1);
+});
+
 test('coherent period stock, combined filters, zero staff and as-of dates', () => {
   const data = base(); data.terminations = imported([{ DNI: '00130365', CESE: '10/02/2026', MOTIVO: 'Renuncia' }]);
   const before = buildRotationDashboard(data, { months: ['2026-01'] });

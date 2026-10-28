@@ -70,3 +70,14 @@ test('reads a detected active headcount sheet while preserving document zeros', 
   assert.equal(row.DNI, '00130365');
   assert.equal(row.CAMPAÑA, 'Culqi');
 });
+
+test('accepts the historical active roster and applies its selected cutoff', () => {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+    ['ESTADO', 'CAMPAÑA', 'SUCURSAL', 'TURNO', 'CARGO', 'FECHA INICIO', 'DNI', 'NOMBRE COMPLETO', 'JEFE INMEDIATO'],
+    ['Activo', 'Entel RUC 10', 'Lima', 'Full time', 'Ejecutivo', '01/10/2026', '00130365', 'Ana Activa', 'Jefe Prueba'],
+  ]), 'Trabajadores');
+  const [row] = parseHeadcountWorkbook(XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }), '2026-10-28');
+  assert.equal(row['FECHA DE CORTE'], '2026-10-28');
+  assert.equal(row['JEFE INMEDIATO'], 'Jefe Prueba');
+});
