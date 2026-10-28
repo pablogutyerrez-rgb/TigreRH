@@ -2,11 +2,12 @@ import { auth } from '../lib/firebase';
 import { getRuntimeEnv } from '../lib/runtimeConfig';
 
 export type RotationFilters = { campaigns?: string[]; months?: string[]; from?: string; to?: string; search?: string };
-export type RotationDetail = { id: string; fecha: string; fecha_alta: string; campana: string; dni: string; nombre: string; proveedor: string; motivo: string; descripcion: string; permanencia_dias: number | null; estado: string; razon: string };
+export type RotationDetail = { id: string; fecha: string; fecha_alta: string; campana: string; dni: string; nombre: string; proveedor: string; motivo: string; descripcion: string; permanencia_dias: number | null; estado: string; razon: string; fecha_revision?: string };
 export type RotationDashboard = {
   terminations: RotationDetail[]; detalle: RotationDetail[]; pendientes: RotationDetail[]; fecha_corte: string;
   altas_historicas: number; total_bajas: number; total_dotacion: number; porcentaje_rotacion: number | null; permanencia_promedio: number | null;
-  funnel: { altas: number; bajas: number; dotacion: number };
+  ceses_fecha_pendiente?: number;
+  funnel: { altas: number; bajas: number; dotacion: number; pendientes?: number };
   by_campaign: Array<{ campana: string; altas: number; dotacion: number; bajas: number; porcentaje: number | null }>;
   motivos: Array<{ name: string; value: number }>; descripciones: Array<{ name: string; value: number }>; permanencia: Array<{ name: string; value: number }>;
   fechas: Array<{ date: string; bajas: number; [motivo: string]: string | number }>;

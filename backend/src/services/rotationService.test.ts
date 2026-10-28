@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildRotationDashboard, hydrateRotationTermination, normalizeHeadcount, normalizeTerminations, rotationDate, saveRotationImport, getRotationDashboard, type RotationTermination } from './rotationService.js';
+import { buildRotationDashboard, hydrateRotationTermination, normalizeHeadcount, normalizeTerminations, rotationDate, saveRotationImport, getRotationDashboard, type RotationTermination, type RotationReview } from './rotationService.js';
 import { dataDb } from '../hybridDb.js';
 
 const notification = (dni: string, fecha: string, motivo = 'Renuncia'): RotationTermination => ({
@@ -45,6 +45,60 @@ const base = () => ({
   terminations: [] as RotationTermination[],
 });
 const imported = (rows: Record<string, unknown>[]): RotationTermination[] => normalizeTerminations(rows).map((row) => ({ ...row, imported_at: '', imported_by: '' }));
+const review = (estado: RotationReview['estado'] = 'Cesado'): RotationReview => ({
+  id: 'review', dni: '00130365', aliases: ['130365'], nombre: 'Ana', name_aliases: ['Ana'], campana: 'Culqi', estado,
+  fecha_revision: '2026-02-20', motivo: 'Renuncia', descripcion: 'Revisado', imported_at: '2026-02-20T18:00:00Z', imported_by: 'admin',
+});
+
+test('approved rotation aliases preserve zeros, merge identities and never mutate source data', () => {
+  const data = base(); data.participants[0].dni = '130365';
+  const headcount = normalizeHeadcount([{ DNI: '00130365', NOMBRE: 'Ana', CAMPAÑA: 'Culqi', 'FECHA INICIO': '01/01/2026', 'FECHA CORTE': '20/02/2026' }]).map(r => ({ ...r, imported_at: '', imported_by: '' }));
+  const input = { ...data, headcount, reviews: [review('Activo')] };
+  const original = structuredClone(input);
+  assert.equal(buildRotationDashboard({ ...data, headcount }, {}, '2026-02-20').total_dotacion, 2);
+  const dashboard = buildRotationDashboard(input, {}, '2026-02-20');
+  assert.equal(dashboard.total_dotacion, 1);
+  assert.equal(buildRotationDashboard(input, { search: '00130365' }, '2026-02-20').total_dotacion, 1);
+  data.terminations = [notification('130365', '2026-02-21')];
+  const after = buildRotationDashboard({ ...input, terminations: data.terminations }, {}, '2026-02-22');
+  assert.equal(after.total_bajas, 1); assert.equal(after.detalle[0].dni, '00130365');
+  assert.deepEqual(input, original);
+});
+
+test('confirmed undated ceses remove active stock without invented dates or period statistics', () => {
+  const input = { ...base(), reviews: [review()] };
+  const after = buildRotationDashboard(input, {}, '2026-02-20');
+  assert.equal(after.total_dotacion, 0); assert.equal(after.total_bajas, 0);
+  assert.equal(after.ceses_fecha_pendiente, 1); assert.equal(after.permanencia_promedio, null);
+  assert.deepEqual(after.fechas, []); assert.deepEqual(after.motivos, []);
+  assert.equal(after.detalle[0].fecha, ''); assert.equal(after.detalle[0].permanencia_dias, null);
+  assert.equal(after.pendientes[0].estado, 'Cese pendiente de fecha');
+  assert.equal(after.funnel.altas, after.funnel.bajas + after.funnel.dotacion + after.funnel.pendientes);
+  assert.equal(buildRotationDashboard(input, { months: ['2026-01'] }, '2026-02-20').total_dotacion, 1);
+  const later = buildRotationDashboard(input, { months: ['2026-03'] }, '2026-03-31');
+  assert.equal(later.total_dotacion, 0); assert.equal(later.ceses_fecha_pendiente, 1); assert.equal(later.total_bajas, 0);
+  assert.equal(buildRotationDashboard(input, { campaigns: ['GPON'] }, '2026-02-20').detalle.length, 0);
+});
+
+test('non-effective highs are not ceses, and genuine future reentries can become active', () => {
+  for (const state of ['Cesado', 'Alta no procedió'] as const) {
+    const input = { ...base(), reviews: [review(state)] };
+    const rejected = buildRotationDashboard(input, {}, '2026-02-20');
+    assert.equal(rejected.total_dotacion, 0); assert.equal(rejected.total_bajas, 0);
+    assert.equal(rejected.altas_historicas, state === 'Cesado' ? 1 : 0);
+    input.participants.push({ ...input.participants[0], id: 'new' });
+    input.attendance.push({ ...input.attendance[0], id: 'new-attendance', participant_id: 'new', fecha: '2026-03-01' });
+    assert.equal(buildRotationDashboard(input, {}, '2026-03-02').total_dotacion, 1);
+  }
+});
+
+test('a later verified import resolves an undated review without double counting', () => {
+  const input = { ...base(), reviews: [review()], terminations: [notification('00130365', '2026-02-15')] };
+  const dashboard = buildRotationDashboard(input, {}, '2026-02-20');
+  assert.equal(dashboard.total_bajas, 1); assert.equal(dashboard.ceses_fecha_pendiente, 0);
+  assert.equal(dashboard.total_dotacion, 0); assert.equal(dashboard.detalle.length, 1);
+  assert.equal(dashboard.permanencia_promedio, 36);
+});
 
 test('dates, normalization and stable notification identity', () => {
   assert.equal(rotationDate(45292.8), '2024-01-01');

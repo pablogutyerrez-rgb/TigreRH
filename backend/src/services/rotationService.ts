@@ -61,6 +61,11 @@ export type RotationTermination = {
 };
 type RotationHigh = { id: string; documento: string; dni: string; nombre: string; campana: string; fecha_alta: string; participant_id: string; session_id: string; fecha_inicio_laboral?: string; source?: 'formation' | 'snapshot' };
 type RotationHeadcount = { id: string; dni: string; nombre: string; campana: string; proveedor: string; estado: string; sucursal: string; turno: string; cargo: string; supervisor: string; fecha_alta: string; fecha_corte: string; raw: Record<string, unknown>; imported_at: string; imported_by: string; updated_at?: string };
+export type RotationReview = {
+  id: string; dni: string; aliases: string[]; nombre: string; name_aliases: string[]; campana: string;
+  estado: 'Activo' | 'Cesado' | 'Alta no procedió'; fecha_revision: string; motivo: string; descripcion: string;
+  imported_at: string; imported_by: string;
+};
 
 const classifyNotification = (motivo: string, descripcion: string, tipoSource: string): RotationTermination['tipo'] => {
   const descriptor = key(`${motivo} ${tipoSource}`);
@@ -252,8 +257,8 @@ const getHighs = (sessions: StoredRecord[], participants: StoredRecord[], attend
   });
 };
 
-type Reconciled = RotationTermination & { estado: string; razon: string; permanencia_dias: number | null };
-type Episode = RotationHigh & { exit?: Reconciled; ambiguous?: boolean };
+type Reconciled = RotationTermination & { estado: string; razon: string; permanencia_dias: number | null; fecha_revision?: string };
+type Episode = RotationHigh & { exit?: Reconciled; pendingExit?: Reconciled; excluded?: boolean; ambiguous?: boolean };
 const elapsedDays = (start: string, end: string) => Math.floor((Date.parse(`${end}T12:00:00Z`) - Date.parse(`${start}T12:00:00Z`)) / 86400000);
 const peruToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const namesMatch = (notificationName: string, formationName: string) => {
@@ -262,16 +267,43 @@ const namesMatch = (notificationName: string, formationName: string) => {
   return !notified || !formation || notified === formation || notified.includes(formation) || formation.includes(notified);
 };
 
-const reconcile = (notifications: RotationTermination[], highs: RotationHigh[], cutoff: string) => {
+const reconcile = (notifications: RotationTermination[], highs: RotationHigh[], cutoff: string, reviews: RotationReview[] = []) => {
   const episodes: Episode[] = [];
   const active = new Map<string, Episode>();
   const previous = new Map<string, Episode>();
   const rows: Reconciled[] = [];
-  const events = [
-    ...highs.map((high) => ({ date: high.fecha_alta, high, notification: undefined as RotationTermination | undefined })),
-    ...notifications.map((notification) => ({ date: notification.fecha, notification, high: undefined as RotationHigh | undefined })),
-  ].sort((a, b) => a.date.localeCompare(b.date) || Number(Boolean(b.high)) - Number(Boolean(a.high)) || (a.high?.id || a.notification!.id).localeCompare(b.high?.id || b.notification!.id));
+  const events: Array<{ date: string; high?: RotationHigh; notification?: RotationTermination; review?: RotationReview }> = [
+    ...highs.map((high) => ({ date: high.fecha_alta, high })),
+    ...notifications.map((notification) => ({ date: notification.fecha, notification })),
+    ...reviews.filter((review) => review.estado !== 'Activo').map((review) => ({ date: review.fecha_revision, review })),
+  ];
+  // A review is an as-of statement, never an invented termination date.
+  events.sort((a, b) => a.date.localeCompare(b.date) || Number(Boolean(b.high)) - Number(Boolean(a.high)) || Number(Boolean(a.review)) - Number(Boolean(b.review)) || (a.high?.id || a.notification?.id || a.review!.id).localeCompare(b.high?.id || b.notification?.id || b.review!.id));
   for (const event of events) {
+    if (event.review) {
+      const review = event.review;
+      if (event.date > cutoff) continue;
+      const document = documentKey(review.dni);
+      const current = active.get(document);
+      const known = current || previous.get(document);
+      if (!current && known?.exit) continue;
+      const rejected = review.estado === 'Alta no procedió';
+      const row: Reconciled = {
+        id: review.id, dni: review.dni, nombre: review.nombre, campana: rotationCampaignName(review.campana), campana_origen: review.campana,
+        fecha: '', fecha_alta: known?.fecha_inicio_laboral || known?.fecha_alta || '', fecha_revision: review.fecha_revision,
+        proveedor: '', motivo: review.motivo, descripcion: review.descripcion, tipo: rejected ? 'administrativo' : 'cese',
+        verificado: false, raw: {}, imported_at: review.imported_at, imported_by: review.imported_by,
+        estado: rejected ? 'Alta no procedió' : 'Cese pendiente de fecha',
+        razon: rejected ? 'Alta no efectiva confirmada en revisión de dotación' : 'Cese confirmado; fecha efectiva pendiente', permanencia_dias: null,
+      };
+      rows.push(row);
+      if (current) {
+        if (rejected) current.excluded = true;
+        else current.pendingExit = row;
+        active.delete(document);
+      }
+      continue;
+    }
     if (event.high) {
       if (event.date > cutoff) continue;
       const high = event.high;
@@ -315,7 +347,7 @@ const reconcile = (notifications: RotationTermination[], highs: RotationHigh[], 
     }
     if (source.tipo === 'reingreso') {
       if (current) { row.estado = 'Reingreso ya activo'; row.razon = 'El documento ya tiene dotación activa'; continue; }
-      const episode = { ...known, id: `reentry-${source.id}`, fecha_alta: source.fecha, exit: undefined };
+      const episode = { ...known, id: `reentry-${source.id}`, fecha_alta: source.fecha, exit: undefined, pendingExit: undefined, excluded: false };
       episodes.push(episode); active.set(document, episode); previous.set(document, episode);
       row.fecha_alta = source.fecha; row.estado = 'Reingreso'; row.razon = ''; continue;
     }
@@ -341,17 +373,36 @@ const isVisible = (row: { campana: string; fecha: string; dni?: string; nombre?:
   (!filters.campaigns?.length || filters.campaigns.some((campaign) => rotationCampaignName(campaign) === rotationCampaignName(row.campana))) && (!filters.months?.length || filters.months.includes(row.fecha.slice(0, 7))) &&
   isWithin(row.fecha, filters.from, filters.to) && (!filters.search || key(`${row.dni || ''} ${row.nombre || ''}`).includes(key(filters.search)));
 
-export const buildRotationDashboard = (data: { sessions: StoredRecord[]; participants: StoredRecord[]; attendance: StoredRecord[]; terminations: RotationTermination[]; headcount?: RotationHeadcount[] }, filters: RotationFilters = {}, today = peruToday()) => {
+export const buildRotationDashboard = (data: { sessions: StoredRecord[]; participants: StoredRecord[]; attendance: StoredRecord[]; terminations: RotationTermination[]; headcount?: RotationHeadcount[]; reviews?: RotationReview[] }, filters: RotationFilters = {}, today = peruToday()) => {
   const formationHighs = getHighs(data.sessions, data.participants, data.attendance);
   const endOfMonth = (month: string) => new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 0)).toISOString().slice(0, 10);
   const cutoff = [today, filters.to, filters.months?.length ? endOfMonth([...filters.months].sort().at(-1)!) : undefined].filter((date): date is string => Boolean(date)).sort()[0];
-  const highs = [...formationHighs, ...snapshotHighs(data.headcount || [], cutoff)];
-  const { episodes, rows } = reconcile(data.terminations, highs, cutoff);
+  const reviews = data.reviews || [];
+  const identities = new Map<string, RotationReview>();
+  for (const review of [...reviews].sort((a, b) => a.imported_at.localeCompare(b.imported_at) || a.id.localeCompare(b.id))) {
+    for (const alias of [review.dni, ...review.aliases]) {
+      const previous = identities.get(documentKey(alias));
+      if (previous && documentKey(previous.dni) !== documentKey(review.dni)) throw new Error('Conciliaciones de Rotación con documentos incompatibles.');
+      identities.set(documentKey(alias), review);
+    }
+  }
+  const identity = <T extends { dni: string; nombre: string }>(row: T): T => {
+    const review = identities.get(documentKey(row.dni));
+    if (!review) return { ...row };
+    const nameApproved = [review.nombre, ...review.name_aliases].some((name) => key(name) === key(row.nombre));
+    return { ...row, dni: review.dni, nombre: nameApproved ? review.nombre : row.nombre };
+  };
+  const highs = [...formationHighs, ...snapshotHighs(data.headcount || [], cutoff)].map((high) => {
+    const corrected = identity(high);
+    return { ...corrected, documento: documentKey(corrected.dni) };
+  });
+  const { episodes, rows } = reconcile(data.terminations.map(identity), highs, cutoff, reviews);
   const hasPeriod = (!filters.from || filters.from <= cutoff) && (!filters.months?.length || filters.months.some((month) => `${month}-01` <= cutoff && (!filters.from || endOfMonth(month) >= filters.from)));
   const identityFilters = { ...filters, months: undefined, from: undefined, to: undefined };
-  const visibleHighs = hasPeriod ? episodes.filter((high) => isVisible({ ...high, fecha: high.fecha_alta }, identityFilters) && (!high.exit || isVisible(high.exit, { ...filters, campaigns: undefined, search: undefined }))) : [];
+  const visibleHighs = hasPeriod ? episodes.filter((high) => !high.excluded && isVisible({ ...high, fecha: high.fecha_alta }, identityFilters) && (!high.exit || isVisible(high.exit, { ...filters, campaigns: undefined, search: undefined }))) : [];
   const visibleCeses = visibleHighs.flatMap((high) => high.exit ? [high.exit] : []);
-  const activeHighs = visibleHighs.filter((high) => !high.exit);
+  const activeHighs = visibleHighs.filter((high) => !high.exit && !high.pendingExit);
+  const pendingExits = visibleHighs.filter((high) => high.pendingExit);
   const byCampaign = new Map<string, { campana: string; altas: number; dotacion: number; bajas: number }>();
   const itemFor = (campana: string) => byCampaign.get(campana) || { campana, altas: 0, dotacion: 0, bajas: 0 };
   visibleHighs.forEach((high) => { const item = itemFor(high.campana); item.altas += 1; byCampaign.set(high.campana, item); });
@@ -360,7 +411,7 @@ export const buildRotationDashboard = (data: { sessions: StoredRecord[]; partici
   const count = (items: Array<{ name: string }>) => [...items.reduce((map, item) => map.set(item.name || 'Sin especificar', (map.get(item.name || 'Sin especificar') || 0) + 1), new Map<string, number>())].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
   const permanencia = visibleCeses.map((item) => item.permanencia_dias!);
   const bucket = (daysValue: number) => daysValue <= 7 ? '0-7 días' : daysValue <= 15 ? '8-15 días' : daysValue <= 30 ? '16-30 días' : daysValue <= 60 ? '31-60 días' : daysValue <= 90 ? '61-90 días' : 'Más de 90 días';
-  const detail = rows.filter((item) => isVisible(item, filters));
+  const detail = rows.filter((item) => item.fecha_revision ? hasPeriod && isVisible(item, identityFilters) : isVisible(item, filters));
   const other = detail.filter((item) => item.campana === OTHER_CAMPAIGN);
   const rate = (exits: number, population: number) => population ? Math.round(exits / population * 10000) / 100 : null;
   const motiveKeys = [...new Set(visibleCeses.map((item) => item.motivo || 'Sin especificar'))].sort();
@@ -371,11 +422,12 @@ export const buildRotationDashboard = (data: { sessions: StoredRecord[]; partici
     monthly.set(month, row);
   });
   return {
-    terminations: visibleCeses, detalle: detail, pendientes: detail.filter((item) => item.estado === 'Pendiente de validación'), fecha_corte: cutoff,
+    terminations: visibleCeses, detalle: detail, pendientes: detail.filter((item) => item.estado === 'Pendiente de validación' || item.estado === 'Cese pendiente de fecha'), fecha_corte: cutoff,
+    ceses_fecha_pendiente: pendingExits.length,
     altas_historicas: visibleHighs.length, total_bajas: visibleCeses.length, total_dotacion: activeHighs.length,
     porcentaje_rotacion: rate(visibleCeses.length, visibleHighs.length),
     permanencia_promedio: permanencia.length ? Math.round(permanencia.reduce((sum, item) => sum + item, 0) / permanencia.length * 10) / 10 : null,
-    funnel: { altas: visibleHighs.length, bajas: visibleCeses.length, dotacion: activeHighs.length },
+    funnel: { altas: visibleHighs.length, bajas: visibleCeses.length, dotacion: activeHighs.length, pendientes: pendingExits.length },
     by_campaign: [...byCampaign.values()].map((item) => ({ ...item, porcentaje: rate(item.bajas, item.altas) })).sort((a, b) => a.campana.localeCompare(b.campana)),
     motivos: count(visibleCeses.map((item) => ({ name: item.motivo }))), descripciones: count(visibleCeses.filter((item) => /despido/.test(key(item.motivo))).map((item) => ({ name: item.descripcion }))),
     permanencia: [7, 15, 30, 60, 90, 91].map((limit) => ({ name: bucket(limit), value: permanencia.filter((days) => bucket(days) === bucket(limit)).length })),
@@ -386,7 +438,7 @@ export const buildRotationDashboard = (data: { sessions: StoredRecord[]; partici
 };
 
 export const getRotationDashboard = async (filters: RotationFilters = {}) => {
-  const [sessions, participants, attendance, notifications, legacy, headcount] = await Promise.all([read<StoredRecord>('sessions'), read<StoredRecord>('participants'), read<StoredRecord>('attendance'), read<RotationTermination & Row>('rotation_notifications'), read<StoredRecord>('rotation_terminations'), read<RotationHeadcount & Row>('rotation_headcount_snapshots')]);
+  const [sessions, participants, attendance, notifications, legacy, headcount, reviews] = await Promise.all([read<StoredRecord>('sessions'), read<StoredRecord>('participants'), read<StoredRecord>('attendance'), read<RotationTermination & Row>('rotation_notifications'), read<StoredRecord>('rotation_terminations'), read<RotationHeadcount & Row>('rotation_headcount_snapshots'), read<RotationReview & Row>('rotation_reviews')]);
   // Legacy imports remain read-only; new versions supersede their logical event in the view.
   const combined = new Map<string, RotationTermination>();
   for (const record of legacy) {
@@ -399,7 +451,7 @@ export const getRotationDashboard = async (filters: RotationFilters = {}) => {
     const row = hydrateRotationTermination(stored);
     combined.set(`${documentKey(row.dni) || key(row.nombre)}:${row.fecha}:${key(row.motivo)}`, row);
   }
-  return buildRotationDashboard({ sessions, participants, attendance, terminations: [...combined.values()], headcount }, filters);
+  return buildRotationDashboard({ sessions, participants, attendance, terminations: [...combined.values()], headcount, reviews }, filters);
 };
 
 export const getRotationRateForEvaluation = async (filters: { campaigns?: string[]; year: number; months: number[] }) => {
