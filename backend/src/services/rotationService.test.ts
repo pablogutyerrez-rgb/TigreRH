@@ -181,6 +181,41 @@ test('campaign aliases combine imported and formation staff in filters, charts a
   assert.equal(buildRotationDashboard(inputs, { campaigns: ['ENTEL RUC 10'], to: '2026-01-19' }, '2026-01-31').total_dotacion, 1);
 });
 
+test('all rotation campaigns normalize source names and filters without merging distinct campaigns', () => {
+  for (const [canonical, alias] of [
+    ['Entel Empresas RUC 10', ' entel RUC10 '],
+    ['Entel Empresas RUC 20', ' ENTEL ruc 20 '],
+    ['Culqi', ' CULQI '],
+    ['GPON', ' G-PON '],
+    ['Equifax', ' EQUIFAX '],
+  ]) {
+    const data = base();
+    data.sessions[0].campana = alias;
+    data.attendance[0].dia = ['GPON', 'Equifax'].includes(canonical) ? 5 : 10;
+    Object.assign(data.participants[0], { resultado_formacion: 'Apto' });
+    const headcount = normalizeHeadcount(['00130365', '00000002'].map((dni) => ({
+      DNI: dni, NOMBRE: dni === '00130365' ? 'Ana' : 'Bruno', CAMPAÑA: alias,
+      'FECHA INICIO': '01/01/2026', 'FECHA DE CORTE': '20/01/2026',
+    }))).map((row) => ({ ...row, imported_at: '', imported_by: '' }));
+    data.terminations = imported([{ DNI: '00000002', CESE: '25/01/2026', MOTIVO: 'Renuncia', CAMPAÑA: canonical }]);
+    const inputs = { ...data, headcount };
+    const original = structuredClone(inputs);
+    const all = buildRotationDashboard(inputs, {}, '2026-01-31');
+    assert.equal(all.altas_historicas, 2, canonical);
+    assert.equal(all.total_dotacion, 1, canonical);
+    assert.equal(all.total_bajas, 1, canonical);
+    assert.deepEqual(all.filter_options.campaigns, [canonical]);
+    assert.equal(all.by_campaign.length, 1);
+    assert.equal(all.by_campaign[0].campana, canonical);
+    assert.equal(all.detalle[0].campana, canonical);
+    for (const selection of [[canonical], [alias], [canonical, alias]]) {
+      assert.deepEqual(buildRotationDashboard(inputs, { campaigns: selection }, '2026-01-31'), all);
+    }
+    assert.equal(buildRotationDashboard(inputs, { campaigns: [canonical === 'GPON' ? 'Culqi' : 'GPON'] }, '2026-01-31').total_dotacion, 0);
+    assert.deepEqual(inputs, original);
+  }
+});
+
 test('coherent period stock, combined filters, zero staff and as-of dates', () => {
   const data = base(); data.terminations = imported([{ DNI: '00130365', CESE: '10/02/2026', MOTIVO: 'Renuncia' }]);
   const before = buildRotationDashboard(data, { months: ['2026-01'] });
