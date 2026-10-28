@@ -276,11 +276,16 @@ const reconcile = (notifications: RotationTermination[], highs: RotationHigh[], 
     const current = active.get(document);
     const known = current || previous.get(document);
     const contractualStart = day(source.fecha_alta);
+    // The contractual period belongs to the notification itself, so it remains
+    // useful in the detail table even while campaign reconciliation is pending.
+    const contractualPermanence = contractualStart && contractualStart <= source.fecha
+      ? elapsedDays(contractualStart, source.fecha)
+      : null;
     const row: Reconciled = {
       ...source, nombre: source.nombre || known?.nombre || '',
       campana: known && !known.ambiguous ? known.campana : OTHER_CAMPAIGN,
       fecha_alta: contractualStart || known?.fecha_alta || source.fecha_alta,
-      estado: 'Pendiente de validación', razon: source.validacion || '', permanencia_dias: null,
+      estado: 'Pendiente de validación', razon: source.validacion || '', permanencia_dias: contractualPermanence,
     };
     rows.push(row);
     if (event.date > cutoff) { row.razon = 'Fecha posterior al corte'; continue; }

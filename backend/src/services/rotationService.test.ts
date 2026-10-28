@@ -110,11 +110,12 @@ test('Notificaciones contractual dates drive permanence while Formación resolve
 test('a DNI match with a conflicting name remains pending in Otros', () => {
   const data = base();
   data.participants[0].nombres = 'Ana Torres';
-  data.terminations = imported([{ DNI: '00130365', 'NOMBRE Y APELLIDO': 'Nombre Distinto', CESE: '20/01/2026', MOTIVO: 'Renuncia' }]);
+  data.terminations = imported([{ DNI: '00130365', 'NOMBRE Y APELLIDO': 'Nombre Distinto', 'FECHA INICIO - FIN': '01/01/2026 - 20/01/2026', MOTIVO: 'Renuncia' }]);
   const dashboard = buildRotationDashboard(data);
   assert.equal(dashboard.total_bajas, 0);
   assert.equal(dashboard.otros.length, 1);
   assert.equal(dashboard.detalle[0].razon, 'Nombre no coincide con el alta de Formación');
+  assert.equal(dashboard.detalle[0].permanencia_dias, 19);
 });
 
 test('rehydrates older notifications from their original Excel row without changing the record id', () => {
