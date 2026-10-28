@@ -40,6 +40,16 @@ const isWithin = (value: string, from?: string, to?: string) => (!from || value 
 const isPresent = (value: unknown) => key(value) === 'asistio';
 const isApto = (value: unknown) => key(value) === 'apto';
 const campaignKey = (value: unknown) => key(value).replace(/empresas/g, '').replace(/^entel(?=ruc)/, '');
+const rotationCampaignName = (campaign: unknown) => {
+  switch (campaignKey(campaign)) {
+    case 'ruc10': return 'Entel Empresas RUC 10';
+    case 'ruc20': return 'Entel Empresas RUC 20';
+    case 'culqi': return 'Culqi';
+    case 'gpon': return 'GPON';
+    case 'equifax': return 'Equifax';
+    default: return normalize(campaign);
+  }
+};
 const isRotationCampaign = (campaign: unknown) => ['entelruc10', 'entelruc20', 'ruc10', 'ruc20', 'culqi', 'gpon', 'equifax'].includes(campaignKey(campaign));
 const isFiveDayRotationCampaign = (campaign: unknown) => ['gpon', 'equifax'].includes(campaignKey(campaign));
 
@@ -228,7 +238,7 @@ const getHighs = (sessions: StoredRecord[], participants: StoredRecord[], attend
   return participants.flatMap((participant) => {
     const session = sessionsById.get(normalize(participant.training_session_id));
     if (!session) return [];
-    const campana = normalize(session.campana || session['campaña']);
+    const campana = rotationCampaignName(session.campana || session['campaña']);
     if (!isRotationCampaign(campana)) return [];
     const finalDay = getScheduledTrainingDays(campana);
     const records = (attendanceByParticipant.get(participant.id) || []).filter((record) => record.training_session_id === session.id && Number(record.dia) === finalDay && !record.isDeleted);
@@ -324,11 +334,11 @@ const snapshotHighs = (snapshots: RotationHeadcount[], cutoff: string): Rotation
     const previous = latest.get(document);
     if (!previous || previous.fecha_corte < snapshot.fecha_corte || (previous.fecha_corte === snapshot.fecha_corte && normalize(previous.updated_at) < normalize(snapshot.updated_at))) latest.set(document, snapshot);
   }
-  return [...latest.values()].map((snapshot) => ({ id: snapshot.id, documento: documentKey(snapshot.dni), dni: snapshot.dni, nombre: snapshot.nombre, campana: snapshot.campana, fecha_alta: snapshot.fecha_corte, fecha_inicio_laboral: snapshot.fecha_alta, participant_id: `snapshot-${snapshot.id}`, session_id: `snapshot-${snapshot.id}`, source: 'snapshot' }));
+  return [...latest.values()].map((snapshot) => ({ id: snapshot.id, documento: documentKey(snapshot.dni), dni: snapshot.dni, nombre: snapshot.nombre, campana: rotationCampaignName(snapshot.campana), fecha_alta: snapshot.fecha_corte, fecha_inicio_laboral: snapshot.fecha_alta, participant_id: `snapshot-${snapshot.id}`, session_id: `snapshot-${snapshot.id}`, source: 'snapshot' }));
 };
 
 const isVisible = (row: { campana: string; fecha: string; dni?: string; nombre?: string }, filters: RotationFilters) =>
-  (!filters.campaigns?.length || filters.campaigns.includes(row.campana)) && (!filters.months?.length || filters.months.includes(row.fecha.slice(0, 7))) &&
+  (!filters.campaigns?.length || filters.campaigns.some((campaign) => rotationCampaignName(campaign) === rotationCampaignName(row.campana))) && (!filters.months?.length || filters.months.includes(row.fecha.slice(0, 7))) &&
   isWithin(row.fecha, filters.from, filters.to) && (!filters.search || key(`${row.dni || ''} ${row.nombre || ''}`).includes(key(filters.search)));
 
 export const buildRotationDashboard = (data: { sessions: StoredRecord[]; participants: StoredRecord[]; attendance: StoredRecord[]; terminations: RotationTermination[]; headcount?: RotationHeadcount[] }, filters: RotationFilters = {}, today = peruToday()) => {
